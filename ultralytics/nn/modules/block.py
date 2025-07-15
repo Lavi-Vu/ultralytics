@@ -9,7 +9,7 @@ import torch.nn.functional as F
 
 from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
-from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, autopad
+from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, autopad, mn_conv
 from .transformer import TransformerBlock
 
 __all__ = (
@@ -52,6 +52,7 @@ __all__ = (
     "PSA",
     "SCDown",
     "TorchVision",
+    "MobileNetV3_BLOCK",
 )
 
 
@@ -2031,3 +2032,30 @@ class SAVPE(nn.Module):
         aggregated = score.transpose(-2, -3) @ x.reshape(B, self.c, C // self.c, -1).transpose(-1, -2)
 
         return F.normalize(aggregated.transpose(-2, -3).reshape(B, Q, -1), dim=-1, p=2)
+
+
+##### Add new Block modules here as needed #####
+#MobileNet paper order : kernel_size, out, SE, act, stride
+#SGD(lr=0.01, momentum=0.9) with parameter groups 95 weight(decay=0.0), 102 weight(decay=0.001), 176 bias(decay=0.0)
+#albumentations Blur(p=0.01, blur_limit=(3, 7)), MedianBlur(p=0.01, blur_limit=(3, 7)), ToGray(p=0.01), CLAHE(p=0.01, clip_limit=(1, 4.0), tile_grid_size=(8, 8))
+class MobileNetV3_BLOCK(nn.Module):
+    def __init__(self, c1, c2, k=3, e=None, sa="None", act="RE", stride=1, pw=True):
+        #input_channels, output_channels, repetition, stride, expension ratio
+        super().__init__()
+        #act = nn.ReLU6(inplace=True) if NL=="RE" else nn.Hardswish()
+        c_mid = e if e != None else c1
+        self.residual = c1 == c2 and stride == 1
+        features = [mn_conv(c1, c_mid, act=act)] if pw else [] #if c_mid != c1 else []
+        features.extend([mn_conv(c_mid, c_mid, k, stride, g=c_mid, act=act),
+                         #attn,
+                         nn.Conv2d(c_mid, c2, 1),
+                         nn.BatchNorm2d(c2),
+                         #nn.SiLU(),
+                         ])
+        self.layers = nn.Sequential(*features)
+    def forward(self, x):
+        #print(x.shape)
+        if self.residual:
+            return x + self.layers(x)
+        else:
+            return self.layers(x)
