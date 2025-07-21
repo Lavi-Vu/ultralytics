@@ -2036,7 +2036,8 @@ class SAVPE(nn.Module):
 
 ##### Add new Block modules here as needed #####
 #MobileNet paper order : kernel_size, out, SE, act, stride
-#SGD(lr=0.01, momentum=0.9) with parameter groups 95 weight(decay=0.0), 102 weight(decay=0.001), 176 bias(decay=0.0)
+#SGD(lr=0.01, momentum=0.9) with parameter groups 95 weight(decay=0.0), 102 weight(decay=0.001), 176 bias(decay=0.0) : NOT TESTED YET
+#AdamW(lr=0.01, momentum=0.937) with parameter groups 88 weight(decay=0.0), 95 weight(decay=0.0005078125), 118 bias(decay=0.0) TEST : 1507
 #albumentations Blur(p=0.01, blur_limit=(3, 7)), MedianBlur(p=0.01, blur_limit=(3, 7)), ToGray(p=0.01), CLAHE(p=0.01, clip_limit=(1, 4.0), tile_grid_size=(8, 8))
 class MobileNetV3_BLOCK(nn.Module):
     def __init__(self, c1, c2, k=3, e=None, sa="None", act="RE", stride=1, pw=True):
