@@ -2,6 +2,6 @@ import cv2
 from ultralytics import YOLO
 
 # 🔧 Load your models
-model = YOLO("/home/lavi/Documents/ultralytics/ultralytics/cfg/models/mbn_yolo.yaml")          # your license plate detector
+model = YOLO("/media/lavi/Data/ultralytics/ultralytics/cfg/models/mbn_yolo_nano.yaml")
 
 model.info()  # Print model information

@@ -1,7 +1,7 @@
 nc: 7  # number of classes
 scales: 
   # [depth, width, max_channels]
-  n: [1.33, 0.50, 576] 
+  n: [1.00, 0.5, 576] 
 
 # MBNV3 Nano backbone
 backbone:
@@ -49,3 +49,4 @@ head:
   - [-1, 1, MobileNetV3_BLOCK, [96, 5, 192, True, "RE", 1]] 
 
   - [[24, 29, 34], 1, Detect, [nc]]  # Detect(P3, P4, P5)
+

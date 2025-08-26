@@ -174,3 +174,8 @@ pnnx*
 
 # calibration image
 calibration_*.npy
+
+coco-pose/*
+*.zip
+coco-pose
+*.txt
