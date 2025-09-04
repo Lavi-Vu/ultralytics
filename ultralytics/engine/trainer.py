@@ -27,6 +27,7 @@ from ultralytics.data.utils import check_cls_dataset, check_det_dataset
 from ultralytics.nn.tasks import attempt_load_one_weight, attempt_load_weights
 from ultralytics.utils import (
     DEFAULT_CFG,
+    GIT,
     LOCAL_RANK,
     LOGGER,
     RANK,
@@ -543,7 +544,7 @@ class BaseTrainer:
         """Read results.csv into a dictionary using polars."""
         import polars as pl  # scope for faster 'import ultralytics'
 
-        return pl.read_csv(self.csv).to_dict(as_series=False)
+        return pl.read_csv(self.csv, infer_schema_length=None).to_dict(as_series=False)
 
     def _model_train(self):
         """Set model in training mode."""
@@ -572,6 +573,12 @@ class BaseTrainer:
                 "train_results": self.read_results_csv(),
                 "date": datetime.now().isoformat(),
                 "version": __version__,
+                "git": {
+                    "root": str(GIT.root),
+                    "branch": GIT.branch,
+                    "commit": GIT.commit,
+                    "origin": GIT.origin,
+                },
                 "license": "AGPL-3.0 (https://ultralytics.com/license)",
                 "docs": "https://docs.ultralytics.com",
             },
