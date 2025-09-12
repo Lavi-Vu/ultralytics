@@ -22,8 +22,8 @@ class ClassificationValidator(BaseValidator):
     confusion matrix generation, and visualization of results.
 
     Attributes:
-        targets (List[torch.Tensor]): Ground truth class labels.
-        pred (List[torch.Tensor]): Model predictions.
+        targets (list[torch.Tensor]): Ground truth class labels.
+        pred (list[torch.Tensor]): Model predictions.
         metrics (ClassifyMetrics): Object to calculate and store classification metrics.
         names (dict): Mapping of class indices to class names.
         nc (int): Number of classes.
@@ -170,7 +170,7 @@ class ClassificationValidator(BaseValidator):
         Plot validation image samples with their ground truth labels.
 
         Args:
-            batch (Dict[str, Any]): Dictionary containing batch data with 'img' (images) and 'cls' (class labels).
+            batch (dict[str, Any]): Dictionary containing batch data with 'img' (images) and 'cls' (class labels).
             ni (int): Batch index used for naming the output file.
 
         Examples:
@@ -178,7 +178,7 @@ class ClassificationValidator(BaseValidator):
             >>> batch = {"img": torch.rand(16, 3, 224, 224), "cls": torch.randint(0, 10, (16,))}
             >>> validator.plot_val_samples(batch, 0)
         """
-        batch["batch_idx"] = torch.arange(len(batch["img"]))  # add batch index for plotting
+        batch["batch_idx"] = torch.arange(batch["img"].shape[0])  # add batch index for plotting
         plot_images(
             labels=batch,
             fname=self.save_dir / f"val_batch{ni}_labels.jpg",
@@ -191,7 +191,7 @@ class ClassificationValidator(BaseValidator):
         Plot images with their predicted class labels and save the visualization.
 
         Args:
-            batch (Dict[str, Any]): Batch data containing images and other information.
+            batch (dict[str, Any]): Batch data containing images and other information.
             preds (torch.Tensor): Model predictions with shape (batch_size, num_classes).
             ni (int): Batch index used for naming the output file.
 
@@ -203,7 +203,7 @@ class ClassificationValidator(BaseValidator):
         """
         batched_preds = dict(
             img=batch["img"],
-            batch_idx=torch.arange(len(batch["img"])),
+            batch_idx=torch.arange(batch["img"].shape[0]),
             cls=torch.argmax(preds, dim=1),
         )
         plot_images(

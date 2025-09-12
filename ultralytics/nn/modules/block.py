@@ -746,7 +746,7 @@ class ImagePoolingAttn(nn.Module):
         Forward pass of ImagePoolingAttn.
 
         Args:
-            x (List[torch.Tensor]): List of input feature maps.
+            x (list[torch.Tensor]): List of input feature maps.
             text (torch.Tensor): Text embeddings.
 
         Returns:
@@ -1033,7 +1033,7 @@ class CBLinear(nn.Module):
 
         Args:
             c1 (int): Input channels.
-            c2s (List[int]): List of output channel sizes.
+            c2s (list[int]): List of output channel sizes.
             k (int): Kernel size.
             s (int): Stride.
             p (int | None): Padding.
@@ -1056,7 +1056,7 @@ class CBFuse(nn.Module):
         Initialize CBFuse module.
 
         Args:
-            idx (List[int]): Indices for feature selection.
+            idx (list[int]): Indices for feature selection.
         """
         super().__init__()
         self.idx = idx
@@ -1066,7 +1066,7 @@ class CBFuse(nn.Module):
         Forward pass through CBFuse layer.
 
         Args:
-            xs (List[torch.Tensor]): List of input tensors.
+            xs (list[torch.Tensor]): List of input tensors.
 
         Returns:
             (torch.Tensor): Fused output tensor.
@@ -1677,7 +1677,7 @@ class TorchVision(nn.Module):
             x (torch.Tensor): Input tensor.
 
         Returns:
-            (torch.Tensor | List[torch.Tensor]): Output tensor or list of tensors.
+            (torch.Tensor | list[torch.Tensor]): Output tensor or list of tensors.
         """
         if self.split:
             y = [x]
@@ -1922,7 +1922,7 @@ class A2C2f(nn.Module):
         y.extend(m(y[-1]) for m in self.m)
         y = self.cv2(torch.cat(y, 1))
         if self.gamma is not None:
-            return x + self.gamma.view(-1, len(self.gamma), 1, 1) * y
+            return x + self.gamma.view(-1, self.gamma.shape[0], 1, 1) * y
         return y
 
 
@@ -1980,7 +1980,7 @@ class SAVPE(nn.Module):
         Initialize SAVPE module with channels, intermediate channels, and embedding dimension.
 
         Args:
-            ch (List[int]): List of input channel dimensions.
+            ch (list[int]): List of input channel dimensions.
             c3 (int): Intermediate channels.
             embed (int): Embedding dimension.
         """
