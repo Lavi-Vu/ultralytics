@@ -63,6 +63,7 @@ from .block import (
 
 )
 from .conv import (
+    GSConv, GSConvE, GSConvE2, GSBottleneckC, GSBottleneck, GSConvns, VoVGSCSPC, VoVGSCSP,
     CBAM,
     ChannelAttention,
     Concat,

@@ -94,6 +94,156 @@ class Conv(nn.Module):
         return self.act(self.conv(x))
 
 
+# GSConvE official version released
+class GSConvE2(nn.Module):
+    '''
+    GSConv enhancement for representation learning: generate various receptive-fields and
+    texture-features only in one Conv module
+    https://github.com/AlanLi1997/rethinking-fpn
+    '''
+    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, d=1, act=True):
+        super().__init__()
+        c_ = c2 // 4
+        self.cv1 = Conv(c1, c_, k, s, p, g, d, act)
+        self.cv2 = Conv(c_, c_, 9, 1, 4, c_, d, act)
+        self.cv3 = Conv(c_, c_, 13, 1, 6, c_, d, act)
+        self.cv4 = Conv(c_, c_, 17, 1, 8, c_, d, act)
+
+    def forward(self, x):
+        x1 = self.cv1(x)
+        x2 = self.cv2(x1)
+        x3 = self.cv3(x1)
+        x4 = self.cv4(x1)
+
+        y = torch.cat((x1, x2, x3, x4), dim=1)
+        # shuffle
+        y = y.reshape(y.shape[0], 2, y.shape[1] // 2, y.shape[2], y.shape[3])
+        y = y.permute(0, 2, 1, 3, 4)
+        return y.reshape(y.shape[0], -1, y.shape[3], y.shape[4])
+
+
+class GSConvE(nn.Module):
+    '''
+    GSConv enhancement for representation learning: generate various receptive-fields and
+    texture-features only in one Conv module
+    # GSConvE1 https://github.com/AlanLi1997/rethinking-fpn
+    '''
+    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, d=1, act=True):
+        super().__init__()
+        c_ = c2 // 2
+        self.cv1 = Conv(c1, c_, k, s, p, g, d, act)
+        self.cv2 = nn.Sequential(
+            nn.Conv2d(c_, c_, 3, 1, 1, bias=False),
+            nn.Conv2d(c_, c_, 3, 1, 1, groups=c_, bias=False),
+            nn.GELU()
+        )
+
+    def forward(self, x):
+        x1 = self.cv1(x)
+        x2 = self.cv2(x1)
+        y = torch.cat((x1, x2), dim=1)
+        # shuffle
+        y = y.reshape(y.shape[0], 2, y.shape[1] // 2, y.shape[2], y.shape[3])
+        y = y.permute(0, 2, 1, 3, 4)
+        return y.reshape(y.shape[0], -1, y.shape[3], y.shape[4])
+
+def channel_shuffle(x, groups=2):
+    B, C, H, W = x.shape
+    assert C % groups == 0, "Channels must be divisible by groups"
+    step = C // groups
+
+    # Create index mapping
+    idx = torch.arange(C, device=x.device).reshape(groups, step).transpose(0,1).reshape(-1)
+    # Apply permutation directly on channel dimension
+    return x[:, idx, :, :]
+
+class GSConv(nn.Module):
+    # GSConv https://github.com/AlanLi1997/slim-neck-by-gsconv
+    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, d=1, act=True):
+        super().__init__()
+        c_ = c2 // 2
+        self.cv1 = Conv(c1, c_, k, s, p, g, d, act)
+        self.cv2 = Conv(c_, c_, 5, 1, 2, c_, d, act)
+
+    
+
+    def forward(self, x):
+        x1 = self.cv1(x)
+        x2 = torch.cat((x1, self.cv2(x1)), 1)
+        return channel_shuffle(x2, groups=2)
+    # def forward(self, x):
+    #     x1 = self.cv1(x)
+    #     x2 = torch.cat((x1, self.cv2(x1)), 1)
+        # shuffle
+        # y = x2.reshape(x2.shape[0], 2, x2.shape[1] // 2, x2.shape[2], x2.shape[3])
+        # y = y.permute(0, 2, 1, 3, 4)
+        # return y.reshape(y.shape[0], -1, y.shape[3], y.shape[4])
+
+        
+class GSConvns(GSConv):
+    # GSConv with a normative-shuffle https://github.com/AlanLi1997/slim-neck-by-gsconv
+    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, d=1, act=True):
+        super().__init__(c1, c2, k, s, p, g, d, act)
+        c_ = c2 // 2
+        self.shuf = nn.Conv2d(c_ * 2, c2, 1, 1, 0, bias=False)
+
+    def forward(self, x):
+        x1 = self.cv1(x)
+        x2 = torch.cat((x1, self.cv2(x1)), 1)
+        # normative-shuffle, TRT supported
+        return self.shuf(x2).relu()
+
+
+class GSBottleneck(nn.Module):
+    # GS Bottleneck https://github.com/AlanLi1997/slim-neck-by-gsconv
+    def __init__(self, c1, c2, k=3, s=1):
+        super().__init__()
+        c_ = c2 // 2
+        # for lighting
+        self.conv_lighting = nn.Sequential(
+            GSConv(c1, c_, 1, 1, 0),
+            GSConv(c_, c2, 3, 1, 1, act=True))
+        self.shortcut = Conv(c1, c2, 1, 1, act=False)
+
+    def forward(self, x):
+        return self.conv_lighting(x) + self.shortcut(x)
+
+
+class GSBottleneckC(GSBottleneck):
+    # cheap GS Bottleneck https://github.com/AlanLi1997/slim-neck-by-gsconv
+    def __init__(self, c1, c2, k=3, s=1):
+        super().__init__(c1, c2, k, s)
+        self.shortcut = DWConv(c1, c2, 3, 1, act=False)
+
+
+class VoVGSCSP(nn.Module):
+    # VoVGSCSP module with GSBottleneck
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):
+        super().__init__()
+        c_ = int(c2 * e)  # hidden channels
+        self.cv1 = Conv(c1, c_, 1, 1)
+        # self.cv2 = Conv(c1, c_, 1, 1)
+        # self.gc1 = GSConv(c_, c_, 1, 1)
+        self.gc2 = GSConv(c1, c_, 3, 1, 1)
+        self.m = C2f(c_, c_, 1, 1)
+        # self.res = Conv(c_, c_, 3, 1, act=False)
+        self.cv3 = Conv(2*c_, c2, 1)  #
+
+    def forward(self, x):
+
+        x1 = self.m(self.cv1(x))
+        y = self.gc2(x)
+        return self.cv3(torch.cat((y, x1), dim=1))
+
+
+class VoVGSCSPC(VoVGSCSP):
+    # cheap VoVGSCSP module with GSBottleneck
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):
+        super().__init__(c1, c2, e)
+        c_ = int(c2 * e)  # hidden channels
+        self.gsb = GSBottleneckC(c_, c_, 3, 1)
+
+
 class Conv2(Conv):
     """
     Simplified RepConv module with Conv fusing.

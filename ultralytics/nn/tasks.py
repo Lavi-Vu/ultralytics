@@ -11,10 +11,11 @@ import torch
 import torch.nn as nn
 from ultralytics.nn.backbone.MobileNetV3 import Conv_BN_HSwish, MobileNetV3_InvertedResidual
 from ultralytics.nn.modules.Bi_FPN import Bi_FPN
+from ultralytics.nn.backbone.MobileVit import MV2Block, MobileViTBlock
 
 from ultralytics.nn.autobackend import check_class_names
 from ultralytics.nn.modules import (
-    AIFI,
+    AIFI,GSConv, GSConvE, GSConvE2, GSBottleneckC, GSBottleneck, GSConvns, VoVGSCSPC, VoVGSCSP,
     C1,
     C2,
     C2PSA,
@@ -1565,6 +1566,7 @@ def parse_model(d, ch, verbose=True):
     layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
     base_modules = frozenset(
         {
+            GSConv, GSConvE, GSConvE2, GSBottleneckC, GSBottleneck, GSConvns, VoVGSCSPC, VoVGSCSP,
             Classify,
             Conv,
             ConvTranspose,
@@ -1695,7 +1697,7 @@ def parse_model(d, ch, verbose=True):
             c2 = args[0]
             c1 = ch[f]
             args = [*args[1:]]
-        ############## MobileNetV3_InvertedResidual ############
+        ############## ADDITION MODULES ############
         elif m in [Conv_BN_HSwish, MobileNetV3_InvertedResidual]:
             c1, c2 = ch[f], args[0]
             if c2 != nc:
@@ -1705,7 +1707,16 @@ def parse_model(d, ch, verbose=True):
         elif m is Bi_FPN:
             length = len([ch[x] for x in f])
             args = [length]
+        elif m is MV2Block:
+            c1, c2 = ch[f], args[0]
+            args = [c1, c2, *args[1:]]
+        elif m is MobileViTBlock:
+            dim, depth, d_c = args[0], args[1], ch[f]
+            if d_c != nc:  # if c2 not equal to number of classes (i.e. for Classify() output)
+                d_c = make_divisible(min(d_c, max_channels) * width, 8)
+            args = [dim, depth, d_c, *args[2:]]
 
+        ##### END ADDITION MODULES #####
         else:
             c2 = ch[f]
 
