@@ -9,10 +9,16 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
+# ---------- Custom Backbones Import -----------
 from ultralytics.nn.backbone.MobileNetV3 import Conv_BN_HSwish, MobileNetV3_InvertedResidual
 from ultralytics.nn.modules.Bi_FPN import Bi_FPN
 from ultralytics.nn.backbone.MobileVit import MV2Block, MobileViTBlock
+from ultralytics.nn.backbone.MobileNext import SGBlock
+from ultralytics.nn.backbone.fasternet import BasicStage, PatchEmbed_FasterNet, PatchMerging_FasterNet
+from ultralytics.nn.backbone.lcnet import DepthSepConv
 
+
+# ---------- End Custom Backbones Import -----------
 from ultralytics.nn.autobackend import check_class_names
 from ultralytics.nn.modules import (
     AIFI,GSConv, GSConvE, GSConvE2, GSBottleneckC, GSBottleneck, GSConvns, VoVGSCSPC, VoVGSCSP,
@@ -249,6 +255,18 @@ class BaseModel(torch.nn.Module):
                 if isinstance(m, RepConv):
                     m.fuse_convs()
                     m.forward = m.forward_fuse  # update forward
+                
+                ######### begin FasterNet ######
+                if type(m) is PatchEmbed_FasterNet:
+                    m.proj = fuse_conv_and_bn(m.proj, m.norm)
+                    delattr(m, 'norm')  # remove BN
+                    m.forward = m.fuseforward
+                if type(m) is PatchMerging_FasterNet:
+                    m.reduction = fuse_conv_and_bn(m.reduction, m.norm)
+                    delattr(m, 'norm')  # remove BN
+                    m.forward = m.fuseforward
+                ######### end FasterNet ######
+                
                 if isinstance(m, RepVGGDW):
                     m.fuse()
                     m.forward = m.forward_fuse
@@ -1602,6 +1620,9 @@ def parse_model(d, ch, verbose=True):
             A2C2f,
             mn_conv,
             MobileNetV3_BLOCK,
+            BasicStage,
+            PatchEmbed_FasterNet, 
+            PatchMerging_FasterNet
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1661,7 +1682,8 @@ def parse_model(d, ch, verbose=True):
                     args.extend((True, 1.2))
             if m is C2fCIB:
                 legacy = False
-        
+            if m in[BasicStage]:
+                args.pop(1)
         elif m is AIFI:
             args = [ch[f], *args]
         elif m in frozenset({HGStem, HGBlock}):
@@ -1714,7 +1736,16 @@ def parse_model(d, ch, verbose=True):
             if d_c != nc:  # if c2 not equal to number of classes (i.e. for Classify() output)
                 d_c = make_divisible(min(d_c, max_channels) * width, 8)
             args = [dim, depth, d_c, *args[2:]]
-
+        elif m is SGBlock:
+            c1, c2 = ch[f], args[0]
+            if c2 != nc:
+                c2 = make_divisible(min(c2, max_channels) * width, 8)
+            args = [c1, c2, *args[1:]]
+        elif m is DepthSepConv:
+            c1, c2 = ch[f], args[0]
+            if c2 != nc:
+                c2 = make_divisible(min(c2, max_channels) * width, 8)
+            args = [c1, c2, *args[1:]]
         ##### END ADDITION MODULES #####
         else:
             c2 = ch[f]
