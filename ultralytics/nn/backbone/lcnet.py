@@ -1,34 +1,21 @@
 from torch import nn
-import torch 
 
-class SEModule(nn.Layer):
-    def __init__(self, channel, reduction=4):
+
+class SeBlock(nn.Module):
+    def __init__(self, in_channel, reduction=4):
         super().__init__()
-        self.avg_pool = nn.AdaptiveAvgPool2D(1)
-        self.conv1 = nn.Conv2D(
-            in_channels=channel,
-            out_channels=channel // reduction,
-            kernel_size=1,
-            stride=1,
-            padding=0)
-        self.relu = nn.ReLU()
-        self.conv2 = nn.Conv2D(
-            in_channels=channel // reduction,
-            out_channels=channel,
-            kernel_size=1,
-            stride=1,
-            padding=0)
-        self.hardsigmoid = nn.Hardsigmoid()
+        self.Squeeze = nn.AdaptiveAvgPool2d(1)
+
+        self.Excitation = nn.Sequential()
+        self.Excitation.add_module('FC1', nn.Conv2d(in_channel, in_channel // reduction, kernel_size=1))  # 1*1卷积与此效果相同
+        self.Excitation.add_module('ReLU', nn.ReLU())
+        self.Excitation.add_module('FC2', nn.Conv2d(in_channel // reduction, in_channel, kernel_size=1))
+        self.Excitation.add_module('Sigmoid', nn.Sigmoid())
 
     def forward(self, x):
-        identity = x
-        x = self.avg_pool(x)
-        x = self.conv1(x)
-        x = self.relu(x)
-        x = self.conv2(x)
-        x = self.hardsigmoid(x)
-        x = torch.mul(x=identity, y=x)
-        return x
+        y = self.Squeeze(x)
+        ouput = self.Excitation(y)
+        return x * (ouput.expand_as(x))
 
 
 class DepthSepConv(nn.Module):
@@ -44,7 +31,7 @@ class DepthSepConv(nn.Module):
             nn.BatchNorm2d(self.inp),
             nn.Hardswish(),
 
-            SEModule(self.inp, reduction=16) if use_se else nn.Sequential(),
+            SeBlock(self.inp, reduction=16) if use_se else nn.Sequential(),
 
             nn.Conv2d(self.inp, self.oup, kernel_size=1, stride=1, padding=0, bias=False),
             nn.BatchNorm2d(self.oup),

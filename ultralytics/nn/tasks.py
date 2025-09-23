@@ -1746,6 +1746,7 @@ def parse_model(d, ch, verbose=True):
             if c2 != nc:
                 c2 = make_divisible(min(c2, max_channels) * width, 8)
             args = [c1, c2, *args[1:]]
+            
         ##### END ADDITION MODULES #####
         else:
             c2 = ch[f]
