@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 # ---------- Custom Backbones Import -----------
 from ultralytics.nn.backbone.MobileNetV3 import Conv_BN_HSwish, MobileNetV3_InvertedResidual
-from ultralytics.nn.modules.Bi_FPN import Bi_FPN
+from ultralytics.nn.modules.Bi_FPN import Bi_FPN, BiFPN_Concat2, BiFPN_Concat3
 from ultralytics.nn.backbone.MobileVit import MV2Block, MobileViTBlock
 from ultralytics.nn.backbone.MobileNext import SGBlock
 from ultralytics.nn.backbone.fasternet import BasicStage, PatchEmbed_FasterNet, PatchMerging_FasterNet
@@ -1696,7 +1696,7 @@ def parse_model(d, ch, verbose=True):
             c2 = args[1] if args[3] else args[1] * 4
         elif m is torch.nn.BatchNorm2d:
             args = [ch[f]]
-        elif m is Concat:
+        elif m in [Concat, BiFPN_Concat2, BiFPN_Concat3]:
             c2 = sum(ch[x] for x in f)
         elif m in frozenset(
             {Detect, WorldDetect, YOLOEDetect, Segment, YOLOESegment, Pose, OBB, ImagePoolingAttn, v10Detect}
