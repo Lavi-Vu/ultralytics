@@ -74,6 +74,8 @@ dependencies = [
     "psutil", # system utilization
     "polars",
     "ultralytics-thop>=2.0.0", # FLOPs computation https://github.com/ultralytics/thop
+    "timm>=1.0.19",
+    "einops==0.8.1"
 ]
 
 # Optional dependencies ------------------------------------------------------------------------------------------------
