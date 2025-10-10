@@ -17,7 +17,9 @@ from ultralytics.nn.backbone.MobileNext import SGBlock
 from ultralytics.nn.backbone.fasternet import BasicStage, PatchEmbed_FasterNet, PatchMerging_FasterNet
 from ultralytics.nn.backbone.lcnet import DepthSepConv
 from ultralytics.nn.backbone.VanillaNet import VanillaBlock
-
+from ultralytics.nn.backbone.hyper import HyperComputeModule, MessageAgg, HyPConv
+from ultralytics.nn.head.dualdetect import DualDDetect, DDetect
+from ultralytics.nn.head.head_improve import Detect_improve
 # ---------- End Custom Backbones Import -----------
 from ultralytics.nn.autobackend import check_class_names
 from ultralytics.nn.modules import (
@@ -426,7 +428,7 @@ class DetectionModel(BaseModel):
 
         # Build strides
         m = self.model[-1]  # Detect()
-        if isinstance(m, Detect):  # includes all Detect subclasses like Segment, Pose, OBB, YOLOEDetect, YOLOESegment
+        if isinstance(m, (Detect, DDetect, Detect_improve)):  # includes all Detect subclasses like Segment, Pose, OBB, YOLOEDetect, YOLOESegment
             s = 256  # 2x min stride
             m.inplace = self.inplace
 
@@ -441,6 +443,15 @@ class DetectionModel(BaseModel):
             m.stride = torch.tensor([s / x.shape[-2] for x in _forward(torch.zeros(1, ch, s, s))])  # forward
             self.stride = m.stride
             self.model.train()  # Set model back to training(default) mode
+            m.bias_init()  # only run once
+        if isinstance(m, (DualDDetect)):
+            s = 256  # 2x min stride
+            m.inplace = self.inplace
+            forward = lambda x: self.forward(x)[0]
+            m.stride = torch.tensor([s / x.shape[-2] for x in forward(torch.zeros(1, ch, s, s))])  # forward
+            # check_anchor_order(m)
+            # m.anchors /= m.stride.view(-1, 1, 1)
+            self.stride = m.stride
             m.bias_init()  # only run once
         else:
             self.stride = torch.Tensor([32])  # default stride for i.e. RTDETR
@@ -1622,7 +1633,8 @@ def parse_model(d, ch, verbose=True):
             MobileNetV3_BLOCK,
             BasicStage,
             PatchEmbed_FasterNet, 
-            PatchMerging_FasterNet
+            PatchMerging_FasterNet,
+            HyperComputeModule
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1699,7 +1711,7 @@ def parse_model(d, ch, verbose=True):
         elif m in [Concat, BiFPN_Concat2, BiFPN_Concat3]:
             c2 = sum(ch[x] for x in f)
         elif m in frozenset(
-            {Detect, WorldDetect, YOLOEDetect, Segment, YOLOESegment, Pose, OBB, ImagePoolingAttn, v10Detect}
+            {Detect, DDetect, Detect_improve, DualDDetect, WorldDetect, YOLOEDetect, Segment, YOLOESegment, Pose, OBB, ImagePoolingAttn, v10Detect}
         ):
             args.append([ch[x] for x in f])
             if m is Segment or m is YOLOESegment:

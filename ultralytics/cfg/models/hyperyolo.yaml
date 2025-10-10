@@ -1,0 +1,123 @@
+# HyperYOLOv1.1-T
+
+# parameters
+nc: 7  # number of classes
+depth_multiple: 0.33  # model depth multiple
+width_multiple: 1.0  # layer channel multiple
+#activation: nn.LeakyReLU(0.1)
+#activation: nn.ReLU()
+
+# anchors
+anchors: 3
+
+# HyperYOLOv1.1 backbone
+backbone:
+  [
+   [-1, 1, nn.Identity, []],
+
+   # conv down
+   [-1, 1, Conv, [16, 3, 2]],  # 1-P1/
+
+   # conv down
+   [-1, 1, Conv, [32, 3, 2]],  # 2-P2/
+
+   # elan-1 block
+   [-1, 1, RepNCSPELAN4, [64, 32, 16, 1]],  # 3
+
+   # avg-conv down
+   [-1, 1, ADown, [64]],  # 4-P3/
+
+   # elan-2 block
+   [-1, 1, RepNCSPELAN4, [128, 64, 32, 1]],  # 5
+
+   # avg-conv down
+   [-1, 1, ADown, [128]],  # 6-P4/
+
+   # elan-2 block
+   [-1, 1, RepNCSPELAN4, [128, 128, 64, 1]],  # 7
+
+   # avg-conv down
+   [-1, 1, ADown, [128]],  # 8-P5/
+
+   # elan-2 block
+   [-1, 1, RepNCSPELAN4, [128, 128, 64, 1]],  # 9
+  ]
+
+# HyperYOLOv1.1 head
+head:
+  [
+   # elan-spp block
+   [-1, 1, SPPELAN, [128, 64]],  # 10
+   # Semantic Collecting
+   [1, 1, nn.AvgPool2d, [8, 8, 0]], # 11
+   [3, 1, nn.AvgPool2d, [4, 4, 0]], # 12
+   [5, 1, nn.AvgPool2d, [2, 2, 0]], # 13
+   [10, 1, nn.Upsample, [None, 2, 'nearest']], # 14
+   [[11, 12, 13, 7, 14], 1, Concat, [1]], # 15
+
+   # Hypergraph Computation
+   [-1, 1, Conv, [128, 1, 1]], # 16
+   [-1, 1, HyperComputeModule, [128]], # 17
+   [-1, 1, RepNCSPELAN4, [128, 128, 64, 1]], # 18
+
+   # Semantic Scattering
+   [-1, 1, nn.AvgPool2d, [2, 2, 0]], # 19
+   [[-1, 10], 1, Concat, [ 1 ]], # 20
+   [-1, 1, Conv, [128, 1, 1]], # 21
+
+   [[18, 7], 1, Concat, [1]], # 22
+   [-1, 1, RepNCSPELAN4, [128, 128, 64, 1]], # 23
+
+   [18, 1, nn.Upsample, [None, 2, 'nearest']], # 24
+   [[-1, 5], 1, Concat, [1]], # 25
+   [-1, 1, RepNCSPELAN4, [64, 64, 32, 1]], # 26 
+
+   [-1, 1, ADown, [64]], # 27
+   [[-1, 23], 1, Concat, [1]], # 28
+   [-1, 1, RepNCSPELAN4, [128, 128, 64, 1]], # 29
+
+   [-1, 1, ADown, [128]], # 30
+   [[-1, 21], 1, Concat, [1]], # 31
+   [-1, 1, RepNCSPELAN4, [128, 128, 64, 1]], # 32 
+
+
+   # multi-level reversible auxiliary branch
+
+   # routing
+   [5, 1, CBLinear, [[64]]], # 33
+   [7, 1, CBLinear, [[64, 128]]], # 34
+   [9, 1, CBLinear, [[64, 128, 128]]], # 35
+
+   # conv down
+   [0, 1, Conv, [16, 3, 2]],  # 36-P1
+
+   # conv down
+   [-1, 1, Conv, [32, 3, 2]],  # 37-P2
+
+   # elan-1 block
+   [-1, 1, RepNCSPELAN4, [64, 32, 16, 1]],  # 38
+
+   # avg-conv down fuse
+   [-1, 1, ADown, [64]],  # 39-P3
+   [[33, 34, 35, -1], 1, CBFuse, [[0, 0, 0]]], # 40
+
+   # elan-2 block
+   [-1, 1, RepNCSPELAN4, [128, 64, 32, 1]],  # 41
+
+   # avg-conv down fuse
+   [-1, 1, ADown, [128]],  # 42-P4
+   [[34, 35, -1], 1, CBFuse, [[1, 1]]], # 43
+
+   # elan-2 block
+   [-1, 1, RepNCSPELAN4, [128, 128, 64, 1]],  # 44
+
+   # avg-conv down fuse
+   [-1, 1, ADown, [128]],  # 45-P5
+   [[35, -1], 1, CBFuse, [[2]]], # 46
+
+   # elan-2 block
+   [-1, 1, RepNCSPELAN4, [128, 128, 64, 1]],  # 47
+
+   # detect
+   [[41, 44, 47, 26, 29, 32], 1, DualDDetect, [nc]],  # DualDDetect(A3, A4, A5, P3, P4, P5)
+  ]

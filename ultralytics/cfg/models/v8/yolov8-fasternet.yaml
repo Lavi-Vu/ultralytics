@@ -37,4 +37,7 @@ head:
   - [[-1, 8], 1, Concat, [1]]  # cat head P5
   - [-1, 1, C2f, [512]]  # 20 (P5/32-large)
 
-  - [[14, 17, 20], 1, Detect, [nc]]  # Detect(P3, P4, P5)
+  # - [[14, 17, 20], 1, Detect, [nc]]  # Detect(P3, P4, P5) #TRAIN 15 
+
+  #TRAIN 22: YOLOv8-fasternet summary: 129 layers, 405,765 parameters, 405,749 gradients, 0.9 GFLOPs
+  - [[14, 17, 20], 1, Detect_improve, [nc]] 
