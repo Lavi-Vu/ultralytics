@@ -17,7 +17,8 @@ backbone:
   - [-1, 8, BasicStage, [160, 1]]  # 5-P4/32
   - [-1, 1, PatchMerging_FasterNet, [320, 2, 2]] # 6
   - [-1, 2, BasicStage, [320, 1]] # 7
-  - [-1, 1, SPPF, [320, 5]]  # 8
+  # - [-1, 1, SPPF, [320, 5]]  # 8
+  - [-1, 1, SPPF_SEAttention, [320, 5]]  # 8
 
 # YOLOv8.0n head 
 head:
@@ -37,7 +38,7 @@ head:
   - [[-1, 8], 1, Concat, [1]]  # cat head P5
   - [-1, 1, C2f, [512]]  # 20 (P5/32-large)
 
-  # - [[14, 17, 20], 1, Detect, [nc]]  # Detect(P3, P4, P5) #TRAIN 15 
+  - [[14, 17, 20], 1, Detect, [nc]]  # Detect(P3, P4, P5) #TRAIN 15 
 
   #TRAIN 22: YOLOv8-fasternet summary: 129 layers, 405,765 parameters, 405,749 gradients, 0.9 GFLOPs
-  - [[14, 17, 20], 1, Detect_improve, [nc]] 
+  # - [[14, 17, 20], 1, Detect_improve, [nc]] 

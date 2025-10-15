@@ -18,8 +18,10 @@ from ultralytics.nn.backbone.fasternet import BasicStage, PatchEmbed_FasterNet, 
 from ultralytics.nn.backbone.lcnet import DepthSepConv
 from ultralytics.nn.backbone.VanillaNet import VanillaBlock
 from ultralytics.nn.backbone.hyper import HyperComputeModule, MessageAgg, HyPConv
+from ultralytics.nn.backbone.convnext import ConvNeXt_Stem, ConvNeXt_Block, ConvNeXt_Downsample
 from ultralytics.nn.head.dualdetect import DualDDetect, DDetect
 from ultralytics.nn.head.head_improve import Detect_improve
+
 # ---------- End Custom Backbones Import -----------
 from ultralytics.nn.autobackend import check_class_names
 from ultralytics.nn.modules import (
@@ -35,6 +37,7 @@ from ultralytics.nn.modules import (
     SPP,
     SPPELAN,
     SPPF,
+    SPPF_SEAttention,
     A2C2f,
     AConv,
     ADown,
@@ -1619,6 +1622,7 @@ def parse_model(d, ch, verbose=True):
             GhostBottleneck,
             SPP,
             SPPF,
+            SPPF_SEAttention,
             C2fPSA,
             C2PSA,
             DWConv,
@@ -1752,7 +1756,14 @@ def parse_model(d, ch, verbose=True):
             if c2 != nc:
                 c2 = make_divisible(min(c2, max_channels) * width, 8)
             args = [c1, c2, *args[1:]]
-
+        elif m in (ConvNeXt_Stem, ConvNeXt_Block, ConvNeXt_Downsample):
+            c1, c2 = ch[f], args[0]
+            if c2 != nc:  # if c2 not equal to number of classes (i.e. for Classify() output)
+                c2 = make_divisible(min(c2, max_channels) * width, 8)
+            args = [c1, c2, *args[1:]]
+            if m is ConvNeXt_Block:
+                args.insert(2, n)  # number of repeats
+                n = 1
         elif m is Bi_FPN:
             length = len([ch[x] for x in f])
             args = [length]

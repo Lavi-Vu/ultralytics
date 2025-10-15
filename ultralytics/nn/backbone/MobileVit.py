@@ -90,7 +90,6 @@ class Transformer(nn.Module):
 
 
 class MV2Block(nn.Module):
-    # CSDN 迪菲赫尔曼
     def __init__(self, inp, oup, stride=1, expansion=4):
         super().__init__()
         self.stride = stride
@@ -131,7 +130,6 @@ class MV2Block(nn.Module):
 
 
 class MobileViTBlock(nn.Module):
-    # CSDN 迪菲赫尔曼
     def __init__(self, dim, depth, channel, kernel_size, patch_size, mlp_dim, dropout=0.):
         super().__init__()
         self.ph = patch_size
