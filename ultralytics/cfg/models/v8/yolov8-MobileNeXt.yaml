@@ -35,6 +35,7 @@ backbone:
   - [-1, 1, SPPF, [1024, 5]]       # 21
 
 #TRAIN 13: YOLOv8n-MobileNeXt summary: 222 layers, 941,829 parameters, 941,813 gradients, 2.9 GFLOPs
+#TRAIN 36 YOLOv8n-MobileNeXt summary: 222 layers, 941,829 parameters, 941,813 gradients, 2.9 GFLOPs
 # YOLOv8.0n head
 # head:
 #   - [-1, 1, nn.Upsample, [None, 2, 'nearest']]
@@ -56,6 +57,7 @@ backbone:
 #   - [[27, 30, 33], 1, Detect, [nc]]  # Detect(P3, P4, P5)
 
 #TRAIN 14 : 222 layers, 622,861 parameters, 622,845 gradients, 2.2 GFLOPs
+#TRAIN 34 : 222 layers, 622,861 parameters, 622,845 gradients, 2.2 GFLOPs
 head:
   - [-1, 1, nn.Upsample, [None, 2, 'nearest']]
   - [[-1, 15], 1, Concat, [1]]  # cat backbone P4
