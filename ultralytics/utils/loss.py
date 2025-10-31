@@ -658,6 +658,18 @@ class v8ClassificationLoss:
         loss = F.cross_entropy(preds, batch["cls"], reduction="mean")
         return loss, loss.detach()
 
+class v8MultiLabelClassificationLoss:
+    """Criterion class for computing multi-label classification losses."""
+
+    def __call__(self, preds, batch):
+        """Compute the multi-label classification loss between predictions and true labels."""        
+        num_att = batch["cls"].shape[1]
+        """Compute the multi-label classification loss between predictions and true labels."""
+        preds = preds[1] if isinstance(preds, (list, tuple)) else preds
+        # Use BCEWithLogitsLoss, as it is designed for multi-label problems
+        loss = F.binary_cross_entropy_with_logits(preds, batch["cls"], reduction="mean")
+        loss_items = loss.detach()  # Return loss value without tracking the gradients
+        return loss, loss_items
 
 class v8OBBLoss(v8DetectionLoss):
     """Calculates losses for object detection, classification, and box distribution in rotated YOLO models."""

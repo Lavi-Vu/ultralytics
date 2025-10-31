@@ -5,7 +5,8 @@ from __future__ import annotations
 import math
 import warnings
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Union, Optional, Dict, List
+import matplotlib.pyplot as plt
 
 import cv2
 import numpy as np
@@ -509,7 +510,35 @@ class Annotator:
                 p2 = xy[0] + w, xy[1] - h if outside else xy[1] + h
                 cv2.rectangle(self.im, xy, p2, box_color, -1, cv2.LINE_AA)  # filled
             cv2.putText(self.im, text, xy, 0, self.sf, txt_color, thickness=self.tf, lineType=cv2.LINE_AA)
-
+    def text_multi_label(self, xy, text, txt_color=(255, 255, 255), anchor="top", box_style=False):
+        """Adds text to an image using PIL or cv2."""
+        if anchor == "bottom":  # start y from font bottom
+            w, h = self.font.getsize(text)  # text width, height
+            xy[1] += 1 - h
+        if self.pil:
+            if box_style:
+                w, h = self.font.getsize(text)
+                self.draw.rectangle((xy[0], xy[1], xy[0] + w + 1, xy[1] + h + 1), fill=txt_color)
+                # Using `txt_color` for background and draw fg with white color
+                txt_color = (255, 255, 255)
+            if "\n" in text:
+                lines = text.split("\n")
+                _, h = self.font.getsize(text)
+                for line in lines:
+                    self.draw.text(xy, line, fill=txt_color, font=self.font)
+                    xy[1] += h
+            else:
+                self.draw.text(xy, text, fill=txt_color, font=self.font)
+        else:
+            if box_style:
+                w, h = cv2.getTextSize(text, 0, fontScale=self.sf, thickness=self.tf)[0]  # text width, height
+                h += 3  # add pixels to pad text
+                outside = xy[1] >= h  # label fits outside box
+                p2 = xy[0] + w, xy[1] - h if outside else xy[1] + h
+                cv2.rectangle(self.im, xy, p2, txt_color, -1, cv2.LINE_AA)  # filled
+                # Using `txt_color` for background and draw fg with white color
+                txt_color = (255, 255, 255)
+            cv2.putText(self.im, text, xy, 0, self.sf, txt_color, thickness=self.tf, lineType=cv2.LINE_AA)   
     def fromarray(self, im):
         """Update self.im from a numpy array."""
         self.im = im if isinstance(im, Image.Image) else Image.fromarray(im)
@@ -856,6 +885,182 @@ def plot_images(
     if on_plot:
         on_plot(fname)
 
+@threaded
+def plot_images_mutilabel(
+    images: Union[torch.Tensor, np.ndarray],
+    batch_idx: Union[torch.Tensor, np.ndarray],
+    cls: Union[torch.Tensor, np.ndarray],
+    bboxes: Union[torch.Tensor, np.ndarray] = np.zeros(0, dtype=np.float32),
+    confs: Optional[Union[torch.Tensor, np.ndarray]] = None,
+    masks: Union[torch.Tensor, np.ndarray] = np.zeros(0, dtype=np.uint8),
+    kpts: Union[torch.Tensor, np.ndarray] = np.zeros((0, 51), dtype=np.float32),
+    paths: Optional[List[str]] = None,
+    fname: str = "images.jpg",
+    names: Optional[Dict[int, str]] = None,
+    on_plot: Optional[Callable] = None,
+    max_size: int = 1920,
+    max_subplots: int = 16,
+    save: bool = True,
+    conf_thres: float = 0.25,
+) -> Optional[np.ndarray]:
+    """
+    Plot image grid with labels, bounding boxes, masks, and keypoints.
+
+    Args:
+        images: Batch of images to plot. Shape: (batch_size, channels, height, width).
+        batch_idx: Batch indices for each detection. Shape: (num_detections,).
+        cls: Class labels for each detection. Shape: (num_detections,).
+        bboxes: Bounding boxes for each detection. Shape: (num_detections, 4) or (num_detections, 5) for rotated boxes.
+        confs: Confidence scores for each detection. Shape: (num_detections,).
+        masks: Instance segmentation masks. Shape: (num_detections, height, width) or (1, height, width).
+        kpts: Keypoints for each detection. Shape: (num_detections, 51).
+        paths: List of file paths for each image in the batch.
+        fname: Output filename for the plotted image grid.
+        names: Dictionary mapping class indices to class names.
+        on_plot: Optional callback function to be called after saving the plot.
+        max_size: Maximum size of the output image grid.
+        max_subplots: Maximum number of subplots in the image grid.
+        save: Whether to save the plotted image grid to a file.
+        conf_thres: Confidence threshold for displaying detections.
+
+    Returns:
+        np.ndarray: Plotted image grid as a numpy array if save is False, None otherwise.
+
+    Note:
+        This function supports both tensor and numpy array inputs. It will automatically
+        convert tensor inputs to numpy arrays for processing.
+    """
+    if isinstance(images, torch.Tensor):
+        images = images.cpu().float().numpy()
+    if isinstance(cls, torch.Tensor):
+        cls = cls.cpu().numpy()
+    if isinstance(bboxes, torch.Tensor):
+        bboxes = bboxes.cpu().numpy()
+    if isinstance(masks, torch.Tensor):
+        masks = masks.cpu().numpy().astype(int)
+    if isinstance(kpts, torch.Tensor):
+        kpts = kpts.cpu().numpy()
+    if isinstance(batch_idx, torch.Tensor):
+        batch_idx = batch_idx.cpu().numpy()
+
+    bs, _, h, w = images.shape  # batch size, _, height, width
+    bs = min(bs, max_subplots)  # limit plot images
+    ns = np.ceil(bs**0.5)  # number of subplots (square)
+    if np.max(images[0]) <= 1:
+        images *= 255  # de-normalise (optional)
+
+    # Build Image
+    mosaic = np.full((int(ns * h), int(ns * w), 3), 255, dtype=np.uint8)  # init
+    for i in range(bs):
+        x, y = int(w * (i // ns)), int(h * (i % ns))  # block origin
+        mosaic[y : y + h, x : x + w, :] = images[i].transpose(1, 2, 0)
+
+    # Resize (optional)
+    scale = max_size / ns / max(h, w)
+    if scale < 1:
+        h = math.ceil(scale * h)
+        w = math.ceil(scale * w)
+        mosaic = cv2.resize(mosaic, tuple(int(x * ns) for x in (w, h)))
+
+    # Annotate
+    fs = int((h + w) * ns * 0.01)  # font size
+    annotator = Annotator(mosaic, line_width=round(fs / 10), font_size=fs, pil=True, example=names)
+    for i in range(bs):
+        x, y = int(w * (i // ns)), int(h * (i % ns))  # block origin
+        annotator.rectangle([x, y, x + w, y + h], None, (255, 255, 255), width=2)  # borders
+        if paths:
+            annotator.text_multi_label((x + 5, y + 5), text=Path(paths[i]).name[:40], txt_color=(220, 220, 220))  # filenames
+         
+        if len(cls) > 0:
+            idx = batch_idx == i
+            if cls.ndim == 2:
+                classes = np.where(cls[idx][0] == 1)[0]  # get indices of active labels
+            else:
+                classes = cls[idx].astype("int")
+
+            labels = confs is None
+
+            if len(bboxes):
+                boxes = bboxes[idx]
+                conf = confs[idx] if confs is not None else None  # check for confidence presence (label vs pred)
+                if len(boxes):
+                    if boxes[:, :4].max() <= 1.1:  # if normalized with tolerance 0.1
+                        boxes[..., [0, 2]] *= w  # scale to pixels
+                        boxes[..., [1, 3]] *= h
+                    elif scale < 1:  # absolute coords need scale if image scales
+                        boxes[..., :4] *= scale
+                boxes[..., 0] += x
+                boxes[..., 1] += y
+                is_obb = boxes.shape[-1] == 5  # xywhr
+                boxes = ops.xywhr2xyxyxyxy(boxes) if is_obb else ops.xywh2xyxy(boxes)
+                for j, box in enumerate(boxes.astype(np.int64).tolist()):
+                    c = classes[j]
+                    color = colors(c)
+                    c = names.get(c, c) if names else c
+                    if labels or conf[j] > conf_thres:
+                        label = f"{c}" if labels else f"{c} {conf[j]:.1f}"
+                        annotator.box_label(box, label, color=color, rotated=is_obb)
+
+            elif len(classes):
+                if cls.ndim == 2:
+                    label_str = "\n".join([names.get(c, str(c)) if names else str(c) for c in classes])
+                    
+                    annotator.text_multi_label([x, y], label_str, txt_color=colors(classes[0]), box_style=True)
+
+                else:
+                    for c in classes:
+                        color = colors(c)
+                        c = names.get(c, c) if names else c
+                        annotator.text_multi_label((x, y), f"{c}", txt_color=color, box_style=True)
+            # Plot keypoints
+            if len(kpts):
+                kpts_ = kpts[idx].copy()
+                if len(kpts_):
+                    if kpts_[..., 0].max() <= 1.01 or kpts_[..., 1].max() <= 1.01:  # if normalized with tolerance .01
+                        kpts_[..., 0] *= w  # scale to pixels
+                        kpts_[..., 1] *= h
+                    elif scale < 1:  # absolute coords need scale if image scales
+                        kpts_ *= scale
+                kpts_[..., 0] += x
+                kpts_[..., 1] += y
+                for j in range(len(kpts_)):
+                    if labels or conf[j] > conf_thres:
+                        annotator.kpts(kpts_[j], conf_thres=conf_thres)
+
+            # Plot masks
+            if len(masks):
+                if idx.shape[0] == masks.shape[0]:  # overlap_masks=False
+                    image_masks = masks[idx]
+                else:  # overlap_masks=True
+                    image_masks = masks[[i]]  # (1, 640, 640)
+                    nl = idx.sum()
+                    index = np.arange(nl).reshape((nl, 1, 1)) + 1
+                    image_masks = np.repeat(image_masks, nl, axis=0)
+                    image_masks = np.where(image_masks == index, 1.0, 0.0)
+
+                im = np.asarray(annotator.im).copy()
+                for j in range(len(image_masks)):
+                    if labels or conf[j] > conf_thres:
+                        color = colors(classes[j])
+                        mh, mw = image_masks[j].shape
+                        if mh != h or mw != w:
+                            mask = image_masks[j].astype(np.uint8)
+                            mask = cv2.resize(mask, (w, h))
+                            mask = mask.astype(bool)
+                        else:
+                            mask = image_masks[j].astype(bool)
+                        try:
+                            im[y : y + h, x : x + w, :][mask] = (
+                                im[y : y + h, x : x + w, :][mask] * 0.4 + np.array(color) * 0.6
+                            )
+                        except Exception:
+                            pass
+                annotator.fromarray(im)
+    if not save:
+        return np.asarray(annotator.im)
+    annotator.im.save(fname)  # save
+    if on_plot:
+        on_plot(fname)
 
 @plt_settings()
 def plot_results(file: str = "path/to/results.csv", dir: str = "", on_plot: Callable | None = None):
@@ -944,7 +1149,71 @@ def plt_color_scatter(v, f, bins: int = 20, cmap: str = "viridis", alpha: float 
     # Scatter plot
     plt.scatter(v, f, c=colors, cmap=cmap, alpha=alpha, edgecolors=edgecolors)
 
+@plt_settings()
+def plot_results_multi_label(file="path/to/results.csv", dir="", segment=False, pose=False, classify=False, regress=False, on_plot=None):
+    """
+    Plot training results from a results CSV file. The function supports various types of data including segmentation,
+    pose estimation, and classification. Plots are saved as 'results.png' in the directory where the CSV is located.
 
+    Args:
+        file (str, optional): Path to the CSV file containing the training results. Defaults to 'path/to/results.csv'.
+        dir (str, optional): Directory where the CSV file is located if 'file' is not provided. Defaults to ''.
+        segment (bool, optional): Flag to indicate if the data is for segmentation. Defaults to False.
+        pose (bool, optional): Flag to indicate if the data is for pose estimation. Defaults to False.
+        classify (bool, optional): Flag to indicate if the data is for classification. Defaults to False.
+        on_plot (callable, optional): Callback function to be executed after plotting. Takes filename as an argument.
+            Defaults to None.
+
+    Example:
+        ```python
+        from ultralytics.utils.plotting import plot_results
+
+        plot_results("path/to/results.csv", segment=True)
+        ```
+    """
+    import pandas as pd  # scope for faster 'import ultralytics'
+    from scipy.ndimage import gaussian_filter1d
+
+    save_dir = Path(file).parent if file else Path(dir)
+    if classify:
+        fig, ax = plt.subplots(2, 2, figsize=(6, 6), tight_layout=True)
+        index = [2, 5, 3, 4]
+    elif segment:
+        fig, ax = plt.subplots(2, 8, figsize=(18, 6), tight_layout=True)
+        index = [2, 3, 4, 5, 6, 7, 10, 11, 14, 15, 16, 17, 8, 9, 12, 13]
+    elif pose:
+        fig, ax = plt.subplots(2, 9, figsize=(21, 6), tight_layout=True)
+        index = [2, 3, 4, 5, 6, 7, 8, 11, 12, 15, 16, 17, 18, 19, 9, 10, 13, 14]
+    elif regress:
+        fig, ax = plt.subplots(2, 2, figsize=(6, 6), tight_layout=True)
+        index = [1, 4, 2, 3]
+    else:
+        fig, ax = plt.subplots(2, 5, figsize=(12, 6), tight_layout=True)
+        index = [2, 3, 4, 5, 6, 9, 10, 11, 7, 8]
+    ax = ax.ravel()
+    files = list(save_dir.glob("results*.csv"))
+    assert len(files), f"No results.csv files found in {save_dir.resolve()}, nothing to plot."
+    for f in files:
+        try:
+            data = pd.read_csv(f)
+            s = [x.strip() for x in data.columns]
+            x = data.values[:, 0]
+            for i, j in enumerate(index):
+                y = data.values[:, j].astype("float")
+                # y[y == 0] = np.nan  # don't show zero values
+                ax[i].plot(x, y, marker=".", label=f.stem, linewidth=2, markersize=8)  # actual results
+                ax[i].plot(x, gaussian_filter1d(y, sigma=3), ":", label="smooth", linewidth=2)  # smoothing line
+                ax[i].set_title(s[j], fontsize=12)
+                # if j in {8, 9, 10}:  # share train and val loss y axes
+                #     ax[i].get_shared_y_axes().join(ax[i], ax[i - 5])
+        except Exception as e:
+            LOGGER.warning(f"WARNING: Plotting error for {f}: {e}")
+    ax[1].legend()
+    fname = save_dir / "results.png"
+    fig.savefig(fname, dpi=200)
+    plt.close()
+    if on_plot:
+        on_plot(fname)
 @plt_settings()
 def plot_tune_results(csv_file: str = "tune_results.csv", exclude_zero_fitness_points: bool = True):
     """

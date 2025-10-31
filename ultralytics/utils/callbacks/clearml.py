@@ -123,6 +123,7 @@ def on_val_end(validator) -> None:
 
 def on_train_end(trainer) -> None:
     """Log final model and training results on training completion."""
+    print("Log final model and training results on training completion.")
     if task := Task.current_task():
         # Log final results, confusion matrix and PR plots
         files = [

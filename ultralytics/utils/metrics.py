@@ -1561,7 +1561,95 @@ class ClassifyMetrics(SimpleClass, DataExportMixin):
             >>> print(classify_summary)
         """
         return [{"top1_acc": round(self.top1, decimals), "top5_acc": round(self.top5, decimals)}]
+class MultiLabelClassifyMetrics(SimpleClass):
+    """
+    Class for computing multi label classification metrics with mean accuracy.
 
+    Attributes:
+        mean_acc (float): The mean label accuracy.
+        mean_f1_score (float): The mean F1 score.
+        speed (Dict[str, float]): A dictionary containing the time taken for each step in the pipeline.
+        fitness (float): The fitness of the model, which is equal to top-5 accuracy.
+        results_dict (Dict[str, Union[float, str]]): A dictionary containing the classification metrics and fitness.
+        keys (List[str]): A list of keys for the results_dict.
+
+    Methods:
+        process(targets, pred): Processes the targets and predictions to compute classification metrics.
+    """
+
+    def __init__(self) -> None:
+        """Initialize a MultiLabelClassifyMetrics instance."""
+        self.mean_acc = 0.0
+        self.mean_f1_score = 0.0
+        self.label_acc = []
+        self.speed = {"preprocess": 0.0, "inference": 0.0, "loss": 0.0, "postprocess": 0.0}
+        self.task = "multi_label_classify"
+
+    def process(self, targets, pred):
+        """Target classes and predicted classes."""
+        if isinstance(pred, list):
+            pred = torch.cat(pred)
+        if isinstance(targets, list):
+            targets = torch.cat(targets)
+
+        eps = 1e-20
+        # Convert to float for arithmetic
+        targets = targets.float()
+        pred = pred.float()
+
+        # TP + FN
+        gt_pos = (targets == 1).sum(dim=0)
+        # TN + FP
+        gt_neg = (targets == 0).sum(dim=0)
+        # TP
+        true_pos = ((targets == 1) * (pred == 1)).sum(dim=0)
+        # TN
+        true_neg = ((targets == 0) * (pred == 0)).sum(dim=0)
+        # FP
+        false_pos = ((targets == 0) * (pred == 1)).sum(dim=0)
+        # FN
+        false_neg = ((targets == 1) * (pred == 0)).sum(dim=0)
+
+        label_pos_recall = true_pos / (gt_pos + eps)  # Sensitivity / Recall
+        label_neg_recall = true_neg / (gt_neg + eps)  # Specificity
+        label_ma = (label_pos_recall + label_neg_recall) / 2  # Mean Accuracy
+
+        label_prec = true_pos / (true_pos + false_pos + eps)
+        label_f1 = 2 * label_prec * label_pos_recall / (label_prec + label_pos_recall + eps)
+
+        label_accuracy = (true_pos + true_neg) / (gt_pos + gt_neg + eps)
+        self.label_acc = label_accuracy.tolist()
+        self.mean_acc = label_ma.mean().item()
+        self.mean_f1_score = label_f1.mean().item()
+
+    @property
+    def fitness(self):
+        return self.mean_acc
+
+    @property
+    def results_dict(self):
+        """Returns a dictionary with model's performance metrics and fitness score."""
+        return dict(zip(self.keys + ["fitness"], [self.mean_acc, self.mean_f1_score, self.fitness]))
+
+    @property
+    def per_label_acc(self):
+        """Return the accuracy of each label for a multi label classification model"""
+        return self.label_acc
+
+    @property
+    def keys(self):
+        """Returns a list of keys for the results_dict property."""
+        return ["metrics/mean_acc", "metrics/mean_f1_score"]
+
+    @property
+    def curves(self):
+        """Returns a list of curves for accessing specific metrics curves."""
+        return []
+
+    @property
+    def curves_results(self):
+        """Returns a list of curves for accessing specific metrics curves."""
+        return []
 
 class OBBMetrics(DetMetrics):
     """

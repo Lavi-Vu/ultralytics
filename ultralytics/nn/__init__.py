@@ -3,6 +3,7 @@
 from .tasks import (
     BaseModel,
     ClassificationModel,
+    MultiLabelClassificationModel,
     DetectionModel,
     SegmentationModel,
     guess_model_scale,
@@ -24,4 +25,5 @@ __all__ = (
     "SegmentationModel",
     "ClassificationModel",
     "BaseModel",
+    "MultiLabelClassificationModel",
 )

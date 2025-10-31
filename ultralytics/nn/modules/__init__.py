@@ -93,6 +93,7 @@ from .head import (
     YOLOEDetect,
     YOLOESegment,
     v10Detect,
+	MultiLabelClassify,
 )
 from .transformer import (
     AIFI,
@@ -151,6 +152,7 @@ __all__ = (
     "Segment",
     "Pose",
     "Classify",
+    "MultiLabelClassify",
     "TransformerEncoderLayer",
     "RepC3",
     "RTDETRDecoder",

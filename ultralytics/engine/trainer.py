@@ -18,12 +18,28 @@ from pathlib import Path
 
 import numpy as np
 import torch
+# try:
+#     # Use file-system based sharing for multiprocessing resources.
+#     # This helps avoid ConnectionResetError in the resource_sharer
+#     # when DataLoader uses pinned memory and multiple workers on Linux.
+#     # See: https://github.com/pytorch/pytorch/issues/13246 and related discussions.
+#     import torch.multiprocessing as _torch_mp
+
+#     if hasattr(_torch_mp, "set_sharing_strategy"):
+#         # set_sharing_strategy is global and safe to call at import time
+#         # on POSIX systems. 'file_system' avoids relying on Unix domain
+#         # sockets which can be closed unexpectedly causing ConnectionResetError.
+#         _torch_mp.set_sharing_strategy("file_system")
+# except Exception:
+#     # If any error here, silently ignore and proceed with default strategy.
+#     # This avoids breaking environments where changing strategy is not allowed.
+#     pass
 from torch import distributed as dist
 from torch import nn, optim
 
 from ultralytics import __version__
 from ultralytics.cfg import get_cfg, get_save_dir
-from ultralytics.data.utils import check_cls_dataset, check_det_dataset
+from ultralytics.data.utils import check_cls_dataset, check_det_dataset, check_multi_label_cls_dataset
 from ultralytics.nn.tasks import load_checkpoint
 from ultralytics.utils import (
     DEFAULT_CFG,
@@ -231,6 +247,7 @@ class BaseTrainer:
                 raise e
             finally:
                 ddp_cleanup(self, str(file))
+
 
         else:
             self._do_train()
@@ -625,6 +642,8 @@ class BaseTrainer:
         try:
             if self.args.task == "classify":
                 data = check_cls_dataset(self.args.data)
+            elif self.args.task == "multi_label_classify":
+                data = check_multi_label_cls_dataset(self.args.data)
             elif self.args.data.rsplit(".", 1)[-1] == "ndjson":
                 # Convert NDJSON to YOLO format
                 import asyncio
