@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import math
 import warnings
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import cv2
 import numpy as np
@@ -721,7 +722,7 @@ def plot_images(
         convert tensor inputs to numpy arrays for processing.
 
         Channel Support:
-        - 1 channel: Greyscale
+        - 1 channel: Grayscale
         - 2 channels: Third channel added as zeros
         - 3 channels: Used as-is (standard RGB)
         - 4+ channels: Cropped to first 3 channels
