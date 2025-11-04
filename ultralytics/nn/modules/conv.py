@@ -10,12 +10,14 @@ import torch
 import torch.nn as nn
 
 __all__ = (
+    "CBAM",
+    "ChannelAttention",
+    "Concat",
     "Conv",
     "Conv2",
-    "LightConv",
+    "ConvTranspose",
     "DWConv",
     "DWConvTranspose2d",
-    "ConvTranspose",
     "Focus",
     "GhostConv",
     "ChannelAttention",
@@ -25,6 +27,9 @@ __all__ = (
     "RepConv",
     "mn_conv",
     "Index",
+    "LightConv",
+    "RepConv",
+    "SpatialAttention",
 )
 
 
