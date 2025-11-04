@@ -1,0 +1,46 @@
+# CelebA face dataset for facial attributes
+
+# path: /data/ml-data/celeba/celeba_10_facial_attributes
+# train: train_attr_list_10.txt
+# val: val_attr_list_10.txt
+
+path: /home/lavi/Downloads/PA100k/PA-100K/data
+train: /home/lavi/Downloads/PA100k/PA-100K/data/train.txt
+val: /home/lavi/Downloads/PA100k/PA-100K/data/val.txt
+
+names:
+  0: Female
+  1: AgeOver60
+  2: Age18-60
+  3: AgeLess18
+  4: Front
+  5: Side
+  6: Back
+  7: Hat
+  8: Glasses
+  9: HandBag
+  10: ShoulderBag
+  11: Backpack
+  12: HoldObjectsInFront
+  13: ShortSleeve
+  14: LongSleeve
+  15: UpperStride
+  16: UpperLogo
+  17: UpperPlaid
+  18: UpperSplice
+  19: LowerStripe
+  20: LowerPattern
+  21: LongCoat
+  22: Trousers
+  23: Shorts
+  24: Skirt&Dress
+  25: boots
+
+# Data structure
+# ├── data
+# │   ├── train.txt
+# │   ├── val.txt
+# │   ├── 000001.jpg
+# │   ├── 000002.jpg
+# │   ├── ...
+# │   ├── 100000.jpg

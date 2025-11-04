@@ -2602,9 +2602,10 @@ def classify_transforms(
     std: tuple[float, float, float] = DEFAULT_STD,
     interpolation: str = "BILINEAR",
     crop_fraction: float = None,
+    stretch: bool = False
 ):
     """
-    Create a composition of image transforms for classification tasks.
+    Creates a composition of image transforms for classification tasks.
 
     This function generates a sequence of torchvision transforms suitable for preprocessing images
     for classification models during evaluation or inference. The transforms include resizing,
@@ -2613,8 +2614,8 @@ def classify_transforms(
     Args:
         size (int | tuple): The target size for the transformed image. If an int, it defines the shortest edge. If a
             tuple, it defines (height, width).
-        mean (tuple[float, float, float]): Mean values for each RGB channel used in normalization.
-        std (tuple[float, float, float]): Standard deviation values for each RGB channel used in normalization.
+        mean (tuple): Mean values for each RGB channel used in normalization.
+        std (tuple): Standard deviation values for each RGB channel used in normalization.
         interpolation (str): Interpolation method of either 'NEAREST', 'BILINEAR' or 'BICUBIC'.
         crop_fraction (float): Deprecated, will be removed in a future version.
 
@@ -2636,45 +2637,53 @@ def classify_transforms(
         )
 
     # Aspect ratio is preserved, crops center within image, no borders are added, image is lost
-    if scale_size[0] == scale_size[1]:
+    if scale_size[0] == scale_size[1] and not stretch:
         # Simple case, use torchvision built-in Resize with the shortest edge mode (scalar size arg)
         tfl = [T.Resize(scale_size[0], interpolation=getattr(T.InterpolationMode, interpolation))]
     else:
         # Resize the shortest edge to matching target dim for non-square target
         tfl = [T.Resize(scale_size)]
-    tfl += [T.CenterCrop(size), T.ToTensor(), T.Normalize(mean=torch.tensor(mean), std=torch.tensor(std))]
+    tfl.extend(
+        [
+            T.CenterCrop(size),
+            T.ToTensor(),
+            T.Normalize(mean=torch.tensor(mean), std=torch.tensor(std)),
+        ]
+    )
+    print(f"Classification transforms: Resize to {scale_size}, {size}, Normalize")
     return T.Compose(tfl)
 
 
 # Classification training augmentations --------------------------------------------------------------------------------
 def classify_augmentations(
-    size: int = 224,
-    mean: tuple[float, float, float] = DEFAULT_MEAN,
-    std: tuple[float, float, float] = DEFAULT_STD,
-    scale: tuple[float, float] = None,
-    ratio: tuple[float, float] = None,
-    hflip: float = 0.5,
-    vflip: float = 0.0,
-    auto_augment: str = None,
-    hsv_h: float = 0.015,  # image HSV-Hue augmentation (fraction)
-    hsv_s: float = 0.4,  # image HSV-Saturation augmentation (fraction)
-    hsv_v: float = 0.4,  # image HSV-Value augmentation (fraction)
-    force_color_jitter: bool = False,
-    erasing: float = 0.0,
-    interpolation: str = "BILINEAR",
+    size=224,
+    mean=DEFAULT_MEAN,
+    std=DEFAULT_STD,
+    scale=None,
+    ratio=None,
+    hflip=0.5,
+    vflip=0.0,
+    auto_augment=None,
+    hsv_h=0.015,  # image HSV-Hue augmentation (fraction)
+    hsv_s=0.4,  # image HSV-Saturation augmentation (fraction)
+    hsv_v=0.4,  # image HSV-Value augmentation (fraction)
+    force_color_jitter=False,
+    erasing=0.0,
+    interpolation="BILINEAR",
+    stretch=False,
 ):
     """
-    Create a composition of image augmentation transforms for classification tasks.
+    Creates a composition of image augmentation transforms for classification tasks.
 
     This function generates a set of image transformations suitable for training classification models. It includes
     options for resizing, flipping, color jittering, auto augmentation, and random erasing.
 
     Args:
         size (int): Target size for the image after transformations.
-        mean (tuple[float, float, float]): Mean values for each RGB channel used in normalization.
-        std (tuple[float, float, float]): Standard deviation values for each RGB channel used in normalization.
-        scale (tuple[float, float] | None): Range of size of the origin size cropped.
-        ratio (tuple[float, float] | None): Range of aspect ratio of the origin aspect ratio cropped.
+        mean (tuple): Mean values for normalization, one per channel.
+        std (tuple): Standard deviation values for normalization, one per channel.
+        scale (tuple | None): Range of size of the origin size cropped.
+        ratio (tuple | None): Range of aspect ratio of the origin aspect ratio cropped.
         hflip (float): Probability of horizontal flip.
         vflip (float): Probability of vertical flip.
         auto_augment (str | None): Auto augmentation policy. Can be 'randaugment', 'augmix', 'autoaugment' or None.
@@ -2700,7 +2709,10 @@ def classify_augmentations(
     scale = tuple(scale or (0.08, 1.0))  # default imagenet scale range
     ratio = tuple(ratio or (3.0 / 4.0, 4.0 / 3.0))  # default imagenet ratio range
     interpolation = getattr(T.InterpolationMode, interpolation)
-    primary_tfl = [T.RandomResizedCrop(size, scale=scale, ratio=ratio, interpolation=interpolation)]
+    if stretch:
+        primary_tfl = [T.Resize((size, size), interpolation=interpolation)]
+    else:
+        primary_tfl = [T.RandomResizedCrop(size, scale=scale, ratio=ratio, interpolation=interpolation)]
     if hflip > 0.0:
         primary_tfl.append(T.RandomHorizontalFlip(p=hflip))
     if vflip > 0.0:

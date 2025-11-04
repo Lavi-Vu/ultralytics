@@ -3,6 +3,7 @@
 from copy import copy
 
 import torch
+import cv2
 
 from ultralytics.data import MultiLabelClassificationDataset, build_dataloader
 from ultralytics.engine.trainer import BaseTrainer

@@ -661,15 +661,53 @@ class v8ClassificationLoss:
 class v8MultiLabelClassificationLoss:
     """Criterion class for computing multi-label classification losses."""
 
+    def __init__(self, epsilon=None, size_sum=False, weight_ratio=False):
+        self.epsilon = epsilon if (epsilon is not None and 0 < epsilon < 1) else None
+        self.size_sum = size_sum
+        self.weight_ratio = weight_ratio
+
+    def _labelsmoothing(self, target, class_num):
+        # PyTorch one-hot and label smoothing
+        if target.ndim == 1 or target.shape[-1] != class_num:
+            one_hot_target = F.one_hot(target.long(), class_num).float()
+        else:
+            one_hot_target = target.float()
+        if self.epsilon is not None:
+            # PyTorch label smoothing for multi-label
+            soft_target = one_hot_target * (1 - self.epsilon) + self.epsilon / class_num
+        else:
+            soft_target = one_hot_target
+        return soft_target
+
+    def _binary_crossentropy(self, input, target, class_num):
+        # input: logits, target: labels
+        if self.weight_ratio:
+            target, label_ratio = target[:, 0, :], target[:, 1, :]
+        elif target.ndim == 3:
+            target = target[:, 0, :]
+        if self.epsilon is not None:
+            target = self._labelsmoothing(target, class_num)
+        cost = F.binary_cross_entropy_with_logits(input, target, reduction='none')
+
+        if self.weight_ratio:
+            targets_mask = (target > 0.5).float()
+            # ratio2weight not defined, so use label_ratio directly as weights
+            weight = label_ratio
+            weight = weight * (target > -1).float()
+            cost = cost * weight
+
+        if self.size_sum:
+            cost = cost.sum(1).mean()
+        else:
+            cost = cost.mean()
+        return cost
+
     def __call__(self, preds, batch):
-        """Compute the multi-label classification loss between predictions and true labels."""        
-        num_att = batch["cls"].shape[1]
-        """Compute the multi-label classification loss between predictions and true labels."""
         preds = preds[1] if isinstance(preds, (list, tuple)) else preds
-        # Use BCEWithLogitsLoss, as it is designed for multi-label problems
-        loss = F.binary_cross_entropy_with_logits(preds, batch["cls"], reduction="mean")
-        loss_items = loss.detach()  # Return loss value without tracking the gradients
-        return loss, loss_items
+        target = batch["cls"]
+        class_num = preds.shape[-1]
+        loss = self._binary_crossentropy(preds, target, class_num)
+        return loss, loss.detach()
 
 class v8OBBLoss(v8DetectionLoss):
     """Calculates losses for object detection, classification, and box distribution in rotated YOLO models."""

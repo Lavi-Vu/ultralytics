@@ -893,7 +893,6 @@ class MultiLabelClassificationDataset:
         if self.cache_ram:
             LOGGER.warning("RAM caching has known issues, disabling it.")
             self.cache_ram = False
-
         self.samples = self.verify_images()
         self.samples = [list(x) + [Path(x[0]).with_suffix(".npy"), None] for x in self.samples]
         scale = (1.0 - args.scale, 1.0)
@@ -908,9 +907,10 @@ class MultiLabelClassificationDataset:
                 hsv_h=args.hsv_h,
                 hsv_s=args.hsv_s,
                 hsv_v=args.hsv_v,
+                stretch=True
             )
             if augment
-            else classify_transforms(size=args.imgsz)
+            else classify_transforms(size=args.imgsz, stretch=True)
         )
 
     def __getitem__(self, i):
