@@ -16,16 +16,16 @@ from .conv import Conv
 from .utils import _get_clones, inverse_sigmoid, multi_scale_deformable_attn_pytorch
 
 __all__ = (
-    "TransformerEncoderLayer",
-    "TransformerLayer",
-    "TransformerBlock",
-    "MLPBlock",
-    "LayerNorm2d",
     "AIFI",
+    "MLP",
     "DeformableTransformerDecoder",
     "DeformableTransformerDecoderLayer",
+    "LayerNorm2d",
+    "MLPBlock",
     "MSDeformAttn",
-    "MLP",
+    "TransformerBlock",
+    "TransformerEncoderLayer",
+    "TransformerLayer",
 )
 
 
