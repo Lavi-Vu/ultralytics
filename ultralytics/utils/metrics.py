@@ -1633,7 +1633,8 @@ class MultiLabelClassifyMetrics(SimpleClass):
     @property
     def results_dict(self):
         """Returns a dictionary with model's performance metrics and fitness score."""
-        return dict(zip(self.keys + ["fitness"], [self.mean_acc, self.mean_f1_score, self.fitness]))
+        return dict(zip([*self.keys, "fitness"], [self.mean_acc, self.mean_f1_score, self.fitness]))
+
 
     @property
     def per_label_acc(self):
@@ -1654,6 +1655,23 @@ class MultiLabelClassifyMetrics(SimpleClass):
     def curves_results(self):
         """Returns a list of curves for accessing specific metrics curves."""
         return []
+    def summary(self, normalize: bool = True, decimals: int = 5) -> list[dict[str, float]]:
+        """
+        Generate a single-row summary of classification metrics (Top-1 and Top-5 accuracy).
+
+        Args:
+            normalize (bool): For Classify metrics, everything is normalized  by default [0-1].
+            decimals (int): Number of decimal places to round the metrics values to.
+
+        Returns:
+            (list[dict[str, float]]): A list with one dictionary containing Top-1 and Top-5 classification accuracy.
+
+        Examples:
+            >>> results = model.val(data="imagenet10")
+            >>> classify_summary = results.summary(decimals=4)
+            >>> print(classify_summary)
+        """
+        return [{"mean_acc": round(self.mean_acc, decimals), "mean_f1_score": round(self.mean_f1_score, decimals)}]
 
 class OBBMetrics(DetMetrics):
     """

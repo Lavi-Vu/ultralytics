@@ -75,9 +75,9 @@ TASK2METRIC = {
     "classify": "metrics/accuracy_top1",
     "pose": "metrics/mAP50-95(P)",
     "obb": "metrics/mAP50-95(B)",
-    "multi_label_classify": "metrics/hamming_acc"
+    "multi_label_classify": "metrics/mean_acc"
 }
-MODELS = frozenset({TASK2MODEL[task] for task in TASKS})
+# MODELS = frozenset({TASK2MODEL[task] for task in TASKS})
 
 ARGV = sys.argv or ["", ""]  # sometimes sys.argv = []
 SOLUTIONS_HELP_MSG = f"""

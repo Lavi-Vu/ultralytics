@@ -96,7 +96,7 @@ class BasicStage(nn.Module):
                  mlp_ratio=2,
                  layer_scale_init_value=0,
                  norm_layer=nn.BatchNorm2d,
-                 act_layer=nn.GELU, #TEST : change from nn.ReLU to nn.GELU
+                 act_layer=nn.ReLU6, #TEST : change from nn.ReLU to nn.GELU
                  pconv_fw_type='split_cat'
                  ):
         super().__init__()

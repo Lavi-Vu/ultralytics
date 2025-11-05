@@ -4,8 +4,8 @@ import torch
 
 from ultralytics.data import MultiLabelClassificationDataset, build_dataloader
 from ultralytics.engine.validator import BaseValidator
-from ultralytics.utils import LOGGER
-from ultralytics.utils.metrics import MultiLabelClassifyMetrics
+from ultralytics.utils import LOGGER, RANK, dist
+from ultralytics.utils.metrics import MultiLabelClassifyMetrics, ConfusionMatrix
 from ultralytics.utils.plotting import plot_images_mutilabel
 
 
@@ -48,6 +48,7 @@ class MultiLabelClassificationValidator(BaseValidator):
         self.nc = len(model.names)
         self.pred = []
         self.targets = []
+        self.confusion_matrix = ConfusionMatrix(names=model.names)
 
     def preprocess(self, batch):
         """Preprocesses input batch and returns it."""
@@ -69,10 +70,15 @@ class MultiLabelClassificationValidator(BaseValidator):
 
     def finalize_metrics(self, *args, **kwargs):
         """Finalizes metrics of the model such as speed."""
+        self.confusion_matrix.process_cls_preds(self.pred, self.targets)
+        # Add this to prevent pin memory leak but the plot make no sense 
+        if self.args.plots:
+            for normalize in True, False:
+                self.confusion_matrix.plot(save_dir=self.save_dir, normalize=normalize, on_plot=self.on_plot)
         self.metrics.speed = self.speed
         self.metrics.save_dir = self.save_dir
 
-    def postprocess(self, preds, img_shape):
+    def postprocess(self, preds):
         """Preprocesses the multi label classification predictions."""
         return preds[0] if isinstance(preds, (list, tuple)) else preds
 
@@ -80,7 +86,18 @@ class MultiLabelClassificationValidator(BaseValidator):
         """Returns a dictionary of metrics obtained by processing targets and predictions."""
         self.metrics.process(self.targets, self.pred)
         return self.metrics.results_dict
-
+    def gather_stats(self) -> None:
+        """Gather stats from all GPUs."""
+        if RANK == 0:
+            gathered_preds = [None] * dist.get_world_size()
+            gathered_targets = [None] * dist.get_world_size()
+            dist.gather_object(self.pred, gathered_preds, dst=0)
+            dist.gather_object(self.targets, gathered_targets, dst=0)
+            self.pred = [pred for rank in gathered_preds for pred in rank]
+            self.targets = [targets for rank in gathered_targets for targets in rank]
+        elif RANK > 0:
+            dist.gather_object(self.pred, None, dst=0)
+            dist.gather_object(self.targets, None, dst=0)
     def build_dataset(self, img_path):
         """Creates and returns a MultiLabelClassificationDataset instance using given image path and preprocessing parameters."""
         return MultiLabelClassificationDataset(img_path, args=self.args, augment=False, prefix=self.args.split)
@@ -103,7 +120,7 @@ class MultiLabelClassificationValidator(BaseValidator):
         """Plot validation image samples."""
         plot_images_mutilabel(
             images=batch["img"],
-            batch_idx=torch.arange(len(batch["img"])),
+            batch_idx=torch.arange(batch["img"].shape[0]),
             cls=batch["cls"],  # warning: use .view(), not .squeeze() for Classify models
             fname=self.save_dir / f"val_batch{ni}_labels.jpg",
             names=self.names,
@@ -116,7 +133,7 @@ class MultiLabelClassificationValidator(BaseValidator):
         thresholded_preds = (preds > 0.5).int()
         plot_images_mutilabel(
             batch["img"],
-            batch_idx=torch.arange(len(batch["img"])),
+            batch_idx=torch.arange(batch["img"].shape[0]),
             cls=thresholded_preds.detach().clone(),
             fname=self.save_dir / f"val_batch{ni}_pred.jpg",
             names=self.names,
