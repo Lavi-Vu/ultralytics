@@ -23,8 +23,7 @@ from ultralytics.utils.nms import non_max_suppression
 
 
 def check_class_names(names: list | dict) -> dict[int, str]:
-    """
-    Check class names and convert to dict format if needed.
+    """Check class names and convert to dict format if needed.
 
     Args:
         names (list | dict): Class names as list or dict format.
@@ -53,8 +52,7 @@ def check_class_names(names: list | dict) -> dict[int, str]:
 
 
 def default_class_names(data: str | Path | None = None) -> dict[int, str]:
-    """
-    Apply default class names to an input YAML file or return numerical class names.
+    """Apply default class names to an input YAML file or return numerical class names.
 
     Args:
         data (str | Path, optional): Path to YAML file containing class names.
@@ -71,8 +69,7 @@ def default_class_names(data: str | Path | None = None) -> dict[int, str]:
 
 
 class AutoBackend(nn.Module):
-    """
-    Handle dynamic backend selection for running inference using Ultralytics YOLO models.
+    """Handle dynamic backend selection for running inference using Ultralytics YOLO models.
 
     The AutoBackend class is designed to provide an abstraction layer for various inference engines. It supports a wide
     range of formats, each with specific naming conventions as outlined below:
@@ -148,8 +145,7 @@ class AutoBackend(nn.Module):
         fuse: bool = True,
         verbose: bool = True,
     ):
-        """
-        Initialize the AutoBackend for inference.
+        """Initialize the AutoBackend for inference.
 
         Args:
             model (str | torch.nn.Module): Path to the model weights file or a module instance.
@@ -249,7 +245,7 @@ class AutoBackend(nn.Module):
             providers = ["CPUExecutionProvider"]
             if cuda:
                 if "CUDAExecutionProvider" in onnxruntime.get_available_providers():
-                    providers.insert(0, "CUDAExecutionProvider")
+                    providers.insert(0, ("CUDAExecutionProvider", {"device_id": device.index}))
                 else:  # Only log warning if CUDA was requested but unavailable
                     LOGGER.warning("Failed to start ONNX Runtime with CUDA. Using CPU...")
                     device = torch.device("cpu")
