@@ -635,8 +635,7 @@ class AutoBackend(nn.Module):
         embed: list | None = None,
         **kwargs: Any,
     ) -> torch.Tensor | list[torch.Tensor]:
-        """
-        Run inference on an AutoBackend model.
+        """Run inference on an AutoBackend model.
 
         Args:
             im (torch.Tensor): The image tensor to perform inference on.
@@ -856,8 +855,7 @@ class AutoBackend(nn.Module):
             return self.from_numpy(y)
 
     def from_numpy(self, x: np.ndarray) -> torch.Tensor:
-        """
-        Convert a numpy array to a tensor.
+        """Convert a numpy array to a tensor.
 
         Args:
             x (np.ndarray): The array to be converted.
@@ -868,8 +866,7 @@ class AutoBackend(nn.Module):
         return torch.tensor(x).to(self.device) if isinstance(x, np.ndarray) else x
 
     def warmup(self, imgsz: tuple[int, int, int, int] = (1, 3, 640, 640)) -> None:
-        """
-        Warm up the model by running one forward pass with a dummy input.
+        """Warm up the model by running one forward pass with a dummy input.
 
         Args:
             imgsz (tuple): The shape of the dummy input tensor in the format (batch_size, channels, height, width)
@@ -885,8 +882,7 @@ class AutoBackend(nn.Module):
 
     @staticmethod
     def _model_type(p: str = "path/to/model.pt") -> list[bool]:
-        """
-        Take a path to a model file and return the model type.
+        """Take a path to a model file and return the model type.
 
         Args:
             p (str): Path to the model file.
