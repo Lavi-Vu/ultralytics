@@ -6,7 +6,7 @@ https://arxiv.org/abs/2303.03667
 import torch
 from timm.layers import DropPath
 from torch import nn
-
+import cv2
 
 class Partial_conv3(nn.Module):
     def __init__(self, dim, n_div, forward):
@@ -96,7 +96,7 @@ class BasicStage(nn.Module):
                  mlp_ratio=2,
                  layer_scale_init_value=0,
                  norm_layer=nn.BatchNorm2d,
-                 act_layer=nn.GELU, #TEST : change from nn.ReLU to nn.GELU
+                 act_layer=nn.ReLU6, #TEST : change from nn.ReLU to nn.GELU
                  pconv_fw_type='split_cat'
                  ):
         super().__init__()

@@ -1,7 +1,7 @@
 import torch
 from einops import rearrange
 from torch import nn
-
+from ultralytics.nn.modules.conv import Conv
 
 def conv_1x1_bn(inp, oup):
     return nn.Sequential(
@@ -49,7 +49,7 @@ class Attention(nn.Module):
         super().__init__()
         inner_dim = dim_head * heads
         project_out = not (heads == 1 and dim_head == dim)
-
+        self.dim_head = dim_head
         self.heads = heads
         self.scale = dim_head ** -0.5
 
@@ -61,15 +61,34 @@ class Attention(nn.Module):
             nn.Dropout(dropout)
         ) if project_out else nn.Identity()
 
-    def forward(self, x):
-        qkv = self.to_qkv(x).chunk(3, dim=-1)
-        q, k, v = map(lambda t: rearrange(t, 'b p n (h d) -> b p h n d', h=self.heads), qkv)
 
-        dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
-        attn = self.attend(dots)
-        out = torch.matmul(attn, v)
-        out = rearrange(out, 'b p h n d -> b p n (h d)')
-        return self.to_out(out)
+    def forward(self, x):
+        B, C, H, W = x.shape
+        N = H * W
+        qkv = self.to_qkv(x).flatten(2).transpose(1, 2)
+        q, k, v = (
+            qkv.view(B, N, self.heads, self.dim_head * 3)
+            .permute(0, 2, 3, 1)
+            .split([self.dim_head, self.dim_head, self.dim_head], dim=2)
+        )
+        attn = (q.transpose(-2, -1) @ k) * (self.dim_head**-0.5)
+        attn = attn.softmax(dim=-1)
+        x = v @ attn.transpose(-2, -1)
+        x = x.permute(0, 3, 1, 2)
+        v = v.permute(0, 3, 1, 2)
+        # qkv = self.to_qkv(x).chunk(3, dim=-1)
+        # q, k, v = map(lambda t: rearrange(t, 'b p n (h d) -> b p h n d', h=self.heads), qkv)
+
+        # dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
+        # attn = self.attend(dots)
+        # out = torch.matmul(attn, v)
+        # out = rearrange(out, 'b p h n d -> b p n (h d)')
+        
+        x = x.reshape(B, H, W, C).permute(0, 3, 1, 2).contiguous()
+        v = v.reshape(B, H, W, C).permute(0, 3, 1, 2).contiguous()
+
+        x = x + self.pe(v)
+        return self.to_out(x)
 
 
 class Transformer(nn.Module):
