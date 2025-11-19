@@ -2492,6 +2492,12 @@ def v8_transforms(dataset, imgsz: int, hyp: IterableSimpleNamespace, stretch: bo
         >>> hyp = IterableSimpleNamespace(mosaic=1.0, copy_paste=0.5, degrees=10.0, translate=0.2, scale=0.9)
         >>> transforms = v8_transforms(dataset, imgsz=640, hyp=hyp)
         >>> augmented_data = transforms(dataset[0])
+
+        >>> # With custom albumentations
+        >>> import albumentations as A
+        >>> augmentations = [A.Blur(p=0.01), A.CLAHE(p=0.01)]
+        >>> hyp.augmentations = augmentations
+        >>> transforms = v8_transforms(dataset, imgsz=640, hyp=hyp)
     """
     mosaic = Mosaic(dataset, imgsz=imgsz, p=hyp.mosaic)
     affine = RandomPerspective(
@@ -2529,7 +2535,7 @@ def v8_transforms(dataset, imgsz: int, hyp: IterableSimpleNamespace, stretch: bo
             pre_transform,
             MixUp(dataset, pre_transform=pre_transform, p=hyp.mixup),
             CutMix(dataset, pre_transform=pre_transform, p=hyp.cutmix),
-            Albumentations(p=1.0),
+            Albumentations(p=1.0, transforms=getattr(hyp, "augmentations", None)),
             RandomHSV(hgain=hyp.hsv_h, sgain=hyp.hsv_s, vgain=hyp.hsv_v),
             RandomFlip(direction="vertical", p=hyp.flipud, flip_idx=flip_idx),
             RandomFlip(direction="horizontal", p=hyp.fliplr, flip_idx=flip_idx),
