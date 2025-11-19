@@ -1845,7 +1845,7 @@ class Albumentations:
         - Spatial transforms are handled differently and require special processing for bounding boxes.
     """
 
-    def __init__(self, p: float = 1.0) -> None:
+    def __init__(self, p: float = 1.0, transforms: list | None = None) -> None:
         """Initialize the Albumentations transform object for YOLO bbox formatted parameters.
 
         This class applies various image augmentations using the Albumentations library, including Blur, Median Blur,
@@ -1854,6 +1854,7 @@ class Albumentations:
 
         Args:
             p (float): Probability of applying the augmentations. Must be between 0 and 1.
+            transforms (list, optional): List of custom Albumentations transforms. If None, uses default transforms.
 
         Attributes:
             p (float): Probability of applying the augmentations.
@@ -1869,6 +1870,11 @@ class Albumentations:
             >>> augmented = transform(image=image, bboxes=bboxes, class_labels=classes)
             >>> augmented_image = augmented["image"]
             >>> augmented_bboxes = augmented["bboxes"]
+
+            >>> # Custom transforms example
+            >>> import albumentations as A
+            >>> custom_transforms = [A.Blur(p=0.01), A.CLAHE(p=0.01)]
+            >>> transform = Albumentations(p=1.0, transforms=custom_transforms)
 
         Notes:
             - Requires Albumentations version 1.0.3 or higher.
@@ -1931,16 +1937,20 @@ class Albumentations:
                 "XYMasking",
             }  # from https://albumentations.ai/docs/getting_started/transforms_and_targets/#spatial-level-transforms
 
-            # Transforms
-            T = [
-                A.Blur(p=0.01),
-                A.MedianBlur(p=0.01),
-                A.ToGray(p=0.01),
-                A.CLAHE(p=0.01),
-                A.RandomBrightnessContrast(p=0.0),
-                A.RandomGamma(p=0.0),
-                A.ImageCompression(quality_range=(75, 100), p=0.0),
-            ]
+            # Transforms, use custom transforms if provided, otherwise use defaults
+            T = (
+                [
+                    A.Blur(p=0.01),
+                    A.MedianBlur(p=0.01),
+                    A.ToGray(p=0.01),
+                    A.CLAHE(p=0.01),
+                    A.RandomBrightnessContrast(p=0.0),
+                    A.RandomGamma(p=0.0),
+                    A.ImageCompression(quality_range=(75, 100), p=0.0),
+                ]
+                if transforms is None
+                else transforms
+            )
 
             # Compose transforms
             self.contains_spatial = any(transform.__class__.__name__ in spatial_transforms for transform in T)
