@@ -4,64 +4,41 @@
 # train: train_attr_list_10.txt
 # val: val_attr_list_10.txt
 
-path: /home/lavi/Downloads/PA100k/PA-100K/data
-train: /home/lavi/Documents/pa100k/train/train_list.txt
-val: /home/lavi/Documents/pa100k/val/val_list.txt
+path: /home/lavi/Pictures/data_human_attr
 
-# names:
-#   0: Female
-#   1: AgeOver60
-#   2: Age18-60
-#   3: AgeLess18
-#   4: Front
-#   5: Side
-#   6: Back
-#   7: Hat
-#   8: Glasses
-#   9: HandBag
-#   10: ShoulderBag
-#   11: Backpack
-#   12: HoldObjectsInFront
-#   13: ShortSleeve
-#   14: LongSleeve
-#   15: UpperStride
-#   16: UpperLogo
-#   17: UpperPlaid
-#   18: UpperSplice
-#   19: LowerStripe
-#   20: LowerPattern
-#   21: LongCoat
-#   22: Trousers
-#   23: Shorts
-#   24: Skirt&Dress
-#   25: boots
+train: /home/lavi/Pictures/data_human_attr/train_merge_filtered.txt
+val: /home/lavi/Pictures/data_human_attr/test_merge_filtered.txt
 names:
-  0: Hat
-  1: Glasses
-  2: ShortSleeve
-  3: LongSleeve
-  4: UpperStride
-  5: UpperLogo
-  6: UpperPlaid
-  7: UpperSplice
-  8: LowerStripe
-  9: LowerPattern
-  10: LongCoat
-  11: Trousers
-  12: Shorts
-  13: Skirt&Dress
-  14: Boots
-  15: HandBag
-  16: ShoulderBag
-  17: Backpack
-  18: HoldObjectsInFront
-  19: AgeLess18
-  20: Age18-60
-  21: AgeOver60
-  22: Female
-  23: Front
-  24: Side
-  25: Back
+  0: Female
+  1: Hat
+  2: Sunglasses
+  3: Backpack
+  4: Handbag
+  5: UpperLong
+  6: UpperShort
+  7: LowerLong
+  8: LowerShort
+  9: Pants
+  10: Dress
+  11: UpperBlack
+  12: UpperBlue
+  13: UpperBrown
+  14: UpperGrey
+  15: UpperGreen
+  16: UpperPink
+  17: UpperPurple
+  18: UpperRed
+  19: UpperWhite
+  20: UpperYellow
+  21: LowerBlack
+  22: LowerBlue
+  23: LowerBrown
+  24: LowerGrey
+  25: LowerGreen
+  26: LowerPink
+  27: LowerPurple
+  28: LowerWhite
+  29: LowerYellow
 
 # Data structure
 # ├── data
