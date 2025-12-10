@@ -767,8 +767,71 @@ class CBAM(nn.Module):
             (torch.Tensor): Attended output tensor.
         """
         return self.spatial_attention(self.channel_attention(x))
+        # return self.channel_attention(x)
 
+        
+        
+# class CBAM(nn.Module):
+#     """Convolutional Block Attention Module."""
 
+#     def __init__(self, c1, kernel_size=7):
+#         super().__init__()
+#         self.channel_attention = ChannelAttention(c1)
+#         self.spatial_attention = SpatialAttention(kernel_size)
+
+#         # Turn on/off feature saving
+
+#     def forward(self, x):
+#         out = self.channel_attention(x)
+
+#         # Debug: save grid after channel attention
+        
+#         self.save_feature_grid(out, "cbam_channel_4x4.png", max_channels=16, nrow=4)
+#         self.save_feature_grid(out, "cbam_channel_8x8.png", max_channels=64, nrow=8)
+
+#         out = self.spatial_attention(out)
+
+#         # Debug: save grid after spatial attention
+#         self.save_feature_grid(out, "cbam_output_4x4.png", max_channels=16, nrow=4)
+#         self.save_feature_grid(out, "cbam_output_8x8.png", max_channels=64, nrow=8)
+
+#         return out
+#     @staticmethod
+#     def save_feature_grid(tensor, filename, max_channels=16, nrow=4, out_size=1024):
+#         """
+#         Saves enlarged feature-map grid. Guaranteed no PIL errors.
+#         """
+#         import torch
+#         import torchvision.utils as vutils
+#         from PIL import Image
+
+#         # Tensor: [B, C, H, W]
+#         t = tensor.detach().float().cpu()
+
+#         # Take batch 0
+#         t = t[0]  # [C, H, W]
+
+#         # Limit channels
+#         t = t[:max_channels]  # [N, H, W]
+
+#         # Ensure shape [N,1,H,W]
+#         t = t.unsqueeze(1)  # [N,1,H,W]
+
+#         # Normalize
+#         t = (t - t.min()) / (t.max() - t.min() + 1e-6)
+
+#         # Create grid (always 3×HxW RGB)
+#         grid = vutils.make_grid(t, nrow=nrow, normalize=False)  # [3,H,W]
+
+#         # Convert to PIL image
+#         ndarr = grid.mul(255).byte().permute(1, 2, 0).numpy()
+#         img = Image.fromarray(ndarr)
+
+#         # 🔥 Resize to large image
+#         img = img.resize((out_size, out_size), Image.NEAREST)
+
+#         # Save final image
+#         img.save(filename)
 class Concat(nn.Module):
     """Concatenate a list of tensors along specified dimension.
 

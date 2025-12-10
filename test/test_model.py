@@ -6,6 +6,8 @@ from ultralytics import YOLO
 # model = YOLO('/media/lavi/Data/ultralytics/ultralytics/cfg/models/v8/yolov8-convnext.yaml')
 # model = YOLO('/media/lavi/Data/ultralytics/ultralytics/cfg/models/v8/yolov8-multi-label-cls.yaml')
 model=YOLO('/media/lavi/Data/ultralytics/ultralytics/cfg/models/v8/yolov8-fasternet.yaml')
+# model=YOLO('/media/lavi/Data/ultralytics/ultralytics/cfg/models/v8/yolov8-lcnet.yaml')
+
 
 # model.export(format="onnx", opset=11, imgsz=(224,112)) # Export the model to ONNX format
 model.info()  # Print model information

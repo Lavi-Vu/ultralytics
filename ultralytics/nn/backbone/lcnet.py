@@ -7,7 +7,7 @@ class SeBlock(nn.Module):
         self.Squeeze = nn.AdaptiveAvgPool2d(1)
 
         self.Excitation = nn.Sequential()
-        self.Excitation.add_module('FC1', nn.Conv2d(in_channel, in_channel // reduction, kernel_size=1))  # 1*1卷积与此效果相同
+        self.Excitation.add_module('FC1', nn.Conv2d(in_channel, in_channel // reduction, kernel_size=1))
         self.Excitation.add_module('ReLU', nn.ReLU())
         self.Excitation.add_module('FC2', nn.Conv2d(in_channel // reduction, in_channel, kernel_size=1))
         self.Excitation.add_module('Sigmoid', nn.Sigmoid())

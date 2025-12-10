@@ -458,7 +458,7 @@ class MultiLabelClassify(nn.Module):
         if self.training:
             return x  
         y = x.sigmoid()  # get final output
-        return y if self.export else (y, x)
+        return y
     
 
 class WorldDetect(Detect):

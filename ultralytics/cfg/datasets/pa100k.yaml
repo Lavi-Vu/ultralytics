@@ -6,8 +6,8 @@
 
 path: /home/lavi/Pictures/data_human_attr
 
-train: /home/lavi/Pictures/data_human_attr/train_merge_filtered.txt
-val: /home/lavi/Pictures/data_human_attr/test_merge_filtered.txt
+train: /home/lavi/Pictures/data_human_attr/train_nguyenvc.txt
+val: /home/lavi/Pictures/data_human_attr/test_nguyenvc.txt
 names:
   0: Female
   1: Hat

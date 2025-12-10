@@ -2597,7 +2597,7 @@ def classify_transforms(
             T.Normalize(mean=torch.tensor(mean), std=torch.tensor(std)),
         ]
     )
-    print(f"Classification transforms: Resize to {scale_size}, {size}, Normalize")
+    print(f"Classification transforms: Resize to {scale_size}, {size}, Normalize stretch : {stretch}")
     return T.Compose(tfl)
 
 
