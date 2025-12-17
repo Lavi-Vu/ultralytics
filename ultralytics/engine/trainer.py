@@ -146,17 +146,19 @@ class BaseTrainer:
             YAML.save(self.save_dir / "args.yaml", args_dict)  # save run args
         self.last, self.best = self.wdir / "last.pt", self.wdir / "best.pt"  # checkpoint paths
         self.save_period = self.args.save_period
-
         self.batch_size = self.args.batch
         self.epochs = self.args.epochs or 100  # in case users accidentally pass epochs=None with timed training
         self.start_epoch = 0
         if RANK == -1:
             print_args(vars(self.args))
-
+        #save args.model if yaml
+        if isinstance(self.args.model, str) and self.args.model.endswith(('.yaml', '.yml')):
+            # copy yaml to save_dir
+            import shutil
+            shutil.copy(self.args.model, self.save_dir / 'model.yaml')
         # Device
         if self.device.type in {"cpu", "mps"}:
             self.args.workers = 0  # faster CPU training as time dominated by inference, not dataloading
-
         # Model and Dataset
         self.model = check_model_file_from_stem(self.args.model)  # add suffix, i.e. yolo11n -> yolo11n.pt
         with torch_distributed_zero_first(LOCAL_RANK):  # avoid auto-downloading dataset multiple times

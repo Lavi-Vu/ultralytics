@@ -1865,7 +1865,6 @@ class A2C2f(nn.Module):
         super().__init__()
         c_ = int(c2 * e)  # hidden channels
         assert c_ % 32 == 0, "Dimension of ABlock be a multiple of 32."
-        print(area)
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv((1 + n) * c_, c2, 1)
 
