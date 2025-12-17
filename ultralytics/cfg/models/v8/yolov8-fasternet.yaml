@@ -16,8 +16,8 @@ backbone:
   - [-1, 8, BasicStage, [160, 1]]  # 5-P4/32
   - [-1, 1, PatchMerging_FasterNet, [320, 2, 2]] # 6
   - [-1, 2, BasicStage, [320, 1]] # 7
-  - [-1, 1, SPPF, [320, 5]]  # 8
-
+  - [-1, 1, SPPF, [1024, 5]]  # 8
+  - [-1, 2, C2PSA, [1024]] # 9
 
 # YOLOv8.0n head
 head:
@@ -30,11 +30,14 @@ head:
   - [-1, 2, C3k2, [256, False]]  # 14 (P3/8-small)
 
   - [-1, 1, Conv, [256, 3, 2]]
-  - [[-1, 11], 1, Concat, [1]]  # cat head P4
+  - [[-1, 12], 1, Concat, [1]]  # cat head P4
   - [-1, 2, C3k2, [512, False]]  # 17 (P4/16-medium)
 
   - [-1, 1, Conv, [512, 3, 2]]
-  - [[-1, 8], 1, Concat, [1]]  # cat head P5
+  - [[-1, 9], 1, Concat, [1]]  # cat head P5
   - [-1, 2, C3k2, [1024, True]]  # 20 (P5/32-large)
 
-  - [[14, 17, 20], 1, Detect, [nc]]  # Detect(P3, P4, P5)
+  - [[15, 18, 21], 1, Detect, [nc]]  # Detect(P3, P4, P5)
+
+
+  
