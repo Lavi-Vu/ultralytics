@@ -30,7 +30,6 @@ from .block import (
     SPP,
     SPPELAN,
     SPPF,
-    SPPF_SEAttention,
     A2C2f,
     AConv,
     ADown,
