@@ -27,6 +27,7 @@ share/python-wheels/
 *.egg
 MANIFEST
 requirements.txt
+!examples/**/requirements.txt
 setup.py
 ultralytics.egg-info
 
@@ -204,3 +205,6 @@ coco-pose/*
 coco-pose
 *.txt
 *.mp4
+# Training logs
+args.yaml
+results.csv
