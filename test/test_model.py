@@ -4,8 +4,8 @@ from ultralytics import YOLO
 # 🔧 Load your models
 # model = YOLO("/media/lavi/Data/ultralytics/ultralytics/cfg/models/MobileNetV3/MobileNetV3.yaml")
 # model = YOLO('/media/lavi/Data/ultralytics/ultralytics/cfg/models/v8/yolov8-convnext.yaml')
-# model = YOLO('/media/lavi/Data/ultralytics/ultralytics/cfg/models/v8/yolov8-multi-label-cls.yaml')
-model=YOLO('/media/lavi/Data/ultralytics/ultralytics/cfg/models/v8/yolov8-fasternet.yaml')
+model = YOLO('/media/lavi/Data/ultralytics/ultralytics/cfg/models/v8/yolov8-multi-label-cls.yaml')
+# model=YOLO('/media/lavi/Data/ultralytics/ultralytics/cfg/models/v8/yolov8-fasternet.yaml')
 # model=YOLO('/media/lavi/Data/ultralytics/ultralytics/cfg/models/v8/yolov8-lcnet.yaml')
 
 
