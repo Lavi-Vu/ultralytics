@@ -512,9 +512,19 @@ class v8SegmentationLoss(v8DetectionLoss):
             )
             if pred_semseg is not None:
                 sem_masks = batch["sem_masks"].to(self.device)  # NxHxW
-                mask_zero = sem_masks == 0  # NxHxW
                 sem_masks = F.one_hot(sem_masks.long(), num_classes=self.nc).permute(0, 3, 1, 2).float()  # NxCxHxW
-                sem_masks[mask_zero.unsqueeze(1).expand_as(sem_masks)] = 0
+
+                if self.overlap:
+                    mask_zero = masks == 0  # NxHxW
+                    sem_masks[mask_zero.unsqueeze(1).expand_as(sem_masks)] = 0
+                else:
+                    batch_idx = batch["batch_idx"].view(-1)  # [total_instances]
+                    for i in range(batch_size):
+                        instance_mask_i = masks[batch_idx == i]  # [num_instances_i, H, W]
+                        if len(instance_mask_i) == 0:
+                            continue
+                        sem_masks[i, :, instance_mask_i.sum(dim=0) == 0] = 0
+
                 loss[4] = self.bcedice_loss(pred_semseg, sem_masks)
                 loss[4] *= self.hyp.box  # seg gain
 
@@ -798,7 +808,7 @@ class PoseLoss26(v8PoseLoss):
         loss[0], loss[3], loss[4] = det_loss[0], det_loss[1], det_loss[2]
 
         batch_size = pred_kpts.shape[0]
-        imgsz = torch.tensor(batch["resized_shape"][0], device=self.device, dtype=pred_kpts.dtype)  # image size (h,w)
+        imgsz = torch.tensor(preds["feats"][0].shape[2:], device=self.device, dtype=pred_kpts.dtype) * self.stride[0]
 
         pred_kpts = pred_kpts.view(batch_size, -1, *self.kpt_shape)  # (b, h*w, 17, 3)
 
@@ -834,7 +844,7 @@ class PoseLoss26(v8PoseLoss):
         if self.rle_loss is not None:
             loss[5] *= self.hyp.rle  # rle gain
 
-        return loss * batch_size, loss.detach()  # loss(box, cls, dfl)
+        return loss * batch_size, loss.detach()  # loss(box, cls, dfl, kpt_location, kpt_visibility)
 
     @staticmethod
     def kpts_decode(anchor_points: torch.Tensor, pred_kpts: torch.Tensor) -> torch.Tensor:
@@ -982,7 +992,7 @@ class v8OBBLoss(v8DetectionLoss):
 
     def loss(self, preds: dict[str, torch.Tensor], batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         """Calculate and return the loss for oriented bounding box detection."""
-        loss = torch.zeros(4, device=self.device)  # box, cls, dfl
+        loss = torch.zeros(4, device=self.device)  # box, cls, dfl, angle
         pred_distri, pred_scores, pred_angle = (
             preds["boxes"].permute(0, 2, 1).contiguous(),
             preds["scores"].permute(0, 2, 1).contiguous(),
@@ -992,7 +1002,7 @@ class v8OBBLoss(v8DetectionLoss):
         batch_size = pred_angle.shape[0]  # batch size, number of masks, mask height, mask width
 
         dtype = pred_scores.dtype
-        imgsz = torch.tensor(batch["resized_shape"][0], device=self.device, dtype=dtype)  # image size (h,w)
+        imgsz = torch.tensor(preds["feats"][0].shape[2:], device=self.device, dtype=dtype) * self.stride[0]
 
         # targets
         try:
@@ -1007,7 +1017,7 @@ class v8OBBLoss(v8DetectionLoss):
             raise TypeError(
                 "ERROR ❌ OBB dataset incorrectly formatted or not a OBB dataset.\n"
                 "This error can occur when incorrectly training a 'OBB' model on a 'detect' dataset, "
-                "i.e. 'yolo train model=yolo11n-obb.pt data=dota8.yaml'.\nVerify your dataset is a "
+                "i.e. 'yolo train model=yolo26n-obb.pt data=dota8.yaml'.\nVerify your dataset is a "
                 "correctly formatted 'OBB' dataset using 'data=dota8.yaml' "
                 "as an example.\nSee https://docs.ultralytics.com/datasets/obb/ for help."
             ) from e

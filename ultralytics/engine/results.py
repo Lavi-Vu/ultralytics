@@ -667,7 +667,7 @@ class Results(SimpleClass, DataExportMixin):
 
         Examples:
             >>> from ultralytics import YOLO
-            >>> model = YOLO("yolo11n.pt")
+            >>> model = YOLO("yolo26n.pt")
             >>> results = model("path/to/image.jpg")
             >>> for result in results:
             >>>     result.save_txt("output.txt")
@@ -782,13 +782,6 @@ class Results(SimpleClass, DataExportMixin):
                         "confidence": round(conf, decimals),
                     }
                 )
-                results.append(
-                    {
-                        "name": self.names[class_id],
-                        "class": class_id,
-                        "confidence": round(conf, decimals),
-                    }
-                )
             return results
 
         is_obb = self.obb is not None
@@ -810,12 +803,17 @@ class Results(SimpleClass, DataExportMixin):
                     "y": (self.masks.xy[i][:, 1] / h).round(decimals).tolist(),
                 }
             if self.keypoints is not None:
-                x, y, visible = self.keypoints[i].data[0].cpu().unbind(dim=1)  # torch Tensor
+                kpt = self.keypoints[i]
+                if kpt.has_visible:
+                    x, y, visible = kpt.data[0].cpu().unbind(dim=1)
+                else:
+                    x, y = kpt.data[0].cpu().unbind(dim=1)
                 result["keypoints"] = {
-                    "x": (x / w).numpy().round(decimals).tolist(),  # decimals named argument required
+                    "x": (x / w).numpy().round(decimals).tolist(),
                     "y": (y / h).numpy().round(decimals).tolist(),
-                    "visible": visible.numpy().round(decimals).tolist(),
                 }
+                if kpt.has_visible:
+                    result["keypoints"]["visible"] = visible.numpy().round(decimals).tolist()
             results.append(result)
 
         return results
@@ -1509,7 +1507,7 @@ class OBB(BaseTensor):
         Examples:
             >>> import torch
             >>> from ultralytics import YOLO
-            >>> model = YOLO("yolo11n-obb.pt")
+            >>> model = YOLO("yolo26n-obb.pt")
             >>> results = model("path/to/image.jpg")
             >>> for result in results:
             ...     obb = result.obb

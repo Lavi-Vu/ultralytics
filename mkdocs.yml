@@ -332,6 +332,7 @@ nav:
           - COCO8: datasets/detect/coco8.md
           - COCO8-Grayscale: datasets/detect/coco8-grayscale.md
           - COCO8-Multispectral: datasets/detect/coco8-multispectral.md
+          - COCO12-Formats: datasets/detect/coco12-formats.md
           - COCO128: datasets/detect/coco128.md
           - Construction-PPE: datasets/detect/construction-ppe.md
           - GlobalWheat2020: datasets/detect/globalwheat2020.md
@@ -522,6 +523,8 @@ nav:
           - platform/account/index.md
           - API Keys: platform/account/api-keys.md
           - Billing: platform/account/billing.md
+          - Activity: platform/account/activity.md
+          - Trash: platform/account/trash.md
           - Settings: platform/account/settings.md
       - Explore: platform/explore.md
       - REST API: platform/api/index.md
