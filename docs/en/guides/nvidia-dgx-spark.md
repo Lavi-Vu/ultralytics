@@ -20,6 +20,17 @@ This comprehensive guide provides a detailed walkthrough for deploying Ultralyti
 
 NVIDIA DGX Spark is a compact desktop AI supercomputer powered by the NVIDIA GB10 Grace Blackwell Superchip. It delivers up to 1 petaFLOP of AI computing performance with FP4 precision, making it ideal for developers, researchers, and data scientists who need powerful AI capabilities in a desktop form factor.
 
+<p align="center">
+  <br>
+  <iframe loading="lazy" width="720" height="405" src="https://www.youtube.com/embed/VHGfpOrPh-s"
+    title="YouTube video player" frameborder="0"
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+    allowfullscreen>
+  </iframe>
+  <br>
+  <strong>Watch:</strong> How to Get up to 1000 FPS with Ultralytics YOLO26 on NVIDIA DGX Spark | <a href="https://docs.ultralytics.com/integrations/tensorrt/">TensorRT</a> & Batch Inference
+</p>
+
 ### Key Specifications
 
 | Specification    | Details                                                                                 |
@@ -146,7 +157,7 @@ The [onnxruntime-gpu](https://pypi.org/project/onnxruntime-gpu/) package hosted 
 Here we will download and install `onnxruntime-gpu 1.24.0` with `Python3.12` support.
 
 ```bash
-pip install https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/onnxruntime_gpu-1.24.0-cp312-cp312-linux_aarch64.whl
+pip install https://github.com/ultralytics/assets/releases/download/v0.0.0/onnxruntime_gpu-1.24.0-cp312-cp312-linux_aarch64.whl
 ```
 
 ## Use TensorRT on NVIDIA DGX Spark
