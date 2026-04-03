@@ -54,6 +54,7 @@ __all__ = (
     "SCDown",
     "TorchVision",
     "MobileNetV3_BLOCK",
+    "HP-CSE", "CSE_CAMv1", "DepthwiseSeparableConvBN", "DepthwiseSeparableDilatedConvBN", "Shortcut"
 )
 
 
@@ -2093,3 +2094,107 @@ class RealNVP(nn.Module):
             self.float()
         z, log_det = self.backward_p(x)
         return self.prior.log_prob(z) + log_det
+
+class DepthwiseSeparableConvBN(nn.Module):
+    def __init__(self, nin, kernels_per_layer, nout, act=True): 
+        super(DepthwiseSeparableConvBN, self).__init__() 
+        self.depthwise = nn.Conv2d(nin, nin * kernels_per_layer, kernel_size=3, padding=1, groups=nin) 
+        self.pointwise = nn.Conv2d(nin * kernels_per_layer, nout, kernel_size=1) 
+        self.bn = nn.BatchNorm2d(nout)
+        self.act = nn.SiLU() if act is True else (act if isinstance(act, nn.Module) else nn.Identity())
+  
+    def forward(self, x): 
+        out = self.depthwise(x) 
+        out = self.pointwise(out) 
+        return self.act(self.bn(out))
+
+    def fuseforward(self, x):
+        out = self.depthwise(x) 
+        out = self.pointwise(out) 
+        return self.act(out)
+
+class DepthwiseSeparableDilatedConvBN(nn.Module):
+    def __init__(self, nin, kernels_per_layer, nout, kernel_size=3, p=None, d=1, act=True): 
+        super(DepthwiseSeparableDilatedConvBN, self).__init__() 
+        self.depthwise = nn.Conv2d(nin, nin * kernels_per_layer, kernel_size=kernel_size, padding=autopad(kernel_size, p), dilation=d, groups=nin) 
+        self.pointwise = nn.Conv2d(nin * kernels_per_layer, nout, kernel_size=1) 
+        self.bn = nn.BatchNorm2d(nout)
+        self.act = nn.SiLU() if act is True else (act if isinstance(act, nn.Module) else nn.Identity())
+  
+    def forward(self, x): 
+        out = self.depthwise(x) 
+        out = self.pointwise(out) 
+        return self.act(self.bn(out))
+
+    def fuseforward(self, x):
+        out = self.depthwise(x) 
+        out = self.pointwise(out) 
+        return self.act(out)
+
+#only needed for compatibility reasons with already trained models (see the weight files included in the repo), this block is the same as the HP-CSE.
+class CSE_CAMv1(nn.Module):
+    def __init__(self, c, r):
+        super(CSE_CAMv1, self).__init__()
+        c_o = c // r
+        self.maxsqueeze = nn.AdaptiveMaxPool2d(1)
+        self.avgsqueeze = nn.AdaptiveAvgPool2d(1)
+
+        self.conv = Conv(c, c, 1, 1, None, 1, 1, nn.Mish())
+        self.linear = nn.Sequential(
+            nn.Conv1d(c, c_o, 1, 1, 0, 1, 1, False),
+            nn.Mish(),
+            nn.Conv1d(c_o, c, 1, 1, 0, 1, 1, False))
+
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        max = self.maxsqueeze(x).view(b,c)
+        avg = self.avgsqueeze(x).view(b,c)
+        max = torch.unsqueeze(max, 2)
+        avg = torch.unsqueeze(avg, 2)
+        linear_max = self.linear(max).view(b, c, 1, 1)
+        linear_avg = self.linear(avg).view(b, c, 1, 1)
+        output = linear_max + linear_avg
+        output = F.sigmoid(output) * x
+        output = self.conv(output)
+        return output
+
+class HP_CSE(nn.Module):
+    def __init__(self, c, r):
+        super(HP_CSE, self).__init__()
+        c_o = c // r
+        self.maxsqueeze = nn.AdaptiveMaxPool2d(1)
+        self.avgsqueeze = nn.AdaptiveAvgPool2d(1)
+
+        self.conv = Conv(c, c, 1, 1, None, 1, 1, nn.Mish())
+        self.linear = nn.Sequential(
+            nn.Conv1d(c, c_o, 1, 1, 0, 1, 1, False),
+            nn.Mish(),
+            nn.Conv1d(c_o, c, 1, 1, 0, 1, 1, False))
+
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        max = self.maxsqueeze(x).view(b,c)
+        avg = self.avgsqueeze(x).view(b,c)
+        max = torch.unsqueeze(max, 2)
+        avg = torch.unsqueeze(avg, 2)
+        linear_max = self.linear(max).view(b, c, 1, 1)
+        linear_avg = self.linear(avg).view(b, c, 1, 1)
+        output = linear_max + linear_avg
+        output = F.sigmoid(output) * x
+        output = self.conv(output)
+        return output
+		
+class Shortcut(nn.Module):
+    def __init__(self, dimension=0):
+        super(Shortcut, self).__init__()
+        self.d = dimension
+
+    def forward(self, x):
+        if len(x) == 2:
+            return x[0]+x[1]
+        elif len(x) == 3:
+            return x[0]+x[1]+x[2]
+        elif len(x) == 4:
+            return x[0]+x[1]+x[2]+x[3]
+        elif len(x) == 5:
+            return x[0]+x[1]+x[2]+x[3]+x[4]

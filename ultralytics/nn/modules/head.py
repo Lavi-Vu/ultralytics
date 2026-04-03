@@ -240,7 +240,6 @@ class Detect(nn.Module):
         """Remove the one2many head for inference optimization."""
         self.cv2 = self.cv3 = None
 
-
 class Segment(Detect):
     """YOLO Segment head for segmentation models.
 
@@ -881,7 +880,6 @@ class WorldDetect(Detect):
         for a, b, s in zip(m.cv2, m.cv3, m.stride):  # from
             a[-1].bias.data[:] = 1.0  # box
             # b[-1].bias.data[:] = math.log(5 / m.nc / (640 / s) ** 2)  # cls (.01 objects, 80 classes, 640 img)
-
 
 class LRPCHead(nn.Module):
     """Lightweight Region Proposal and Classification Head for efficient object detection.

@@ -60,7 +60,7 @@ from .block import (
     SCDown,
     TorchVision,
     MobileNetV3_BLOCK,
-
+    HP_CSE, CSE_CAMv1, DepthwiseSeparableConvBN, DepthwiseSeparableDilatedConvBN,Shortcut,
 )
 from .conv import (
     GSConv, GSConvE, GSConvE2, GSBottleneckC, GSBottleneck, GSConvns, VoVGSCSPC, VoVGSCSP,
@@ -191,4 +191,6 @@ __all__ = (
     "YOLOESegment",
     "YOLOESegment26",
     "v10Detect",
+    "HP_CSE", "CSE_CAMv1", "DepthwiseSeparableConvBN", "DepthwiseSeparableDilatedConvBN", "Shortcut"
+
 )
