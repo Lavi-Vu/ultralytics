@@ -1,13 +1,13 @@
 import torch
 from einops import rearrange
 from torch import nn
-from ultralytics.nn.modules.conv import Conv
+
 
 def conv_1x1_bn(inp, oup):
     return nn.Sequential(
         nn.Conv2d(inp, oup, 1, 1, 0, bias=False),
         nn.BatchNorm2d(oup),
-        nn.SiLU()
+        nn.ReLU()
     )
 
 
@@ -15,14 +15,14 @@ def conv_nxn_bn(inp, oup, kernal_size=3, stride=1):
     return nn.Sequential(
         nn.Conv2d(inp, oup, kernal_size, stride, 1, bias=False),
         nn.BatchNorm2d(oup),
-        nn.SiLU()
+        nn.ReLU()
     )
 
 
 class PreNorm(nn.Module):
     def __init__(self, dim, fn):
         super().__init__()
-        self.norm = nn.LayerNorm(dim)
+        self.norm = nn.BatchNorm2d(dim)
         self.fn = fn
 
     def forward(self, x, **kwargs):
@@ -33,10 +33,10 @@ class FeedForward(nn.Module):
     def __init__(self, dim, hidden_dim, dropout=0.):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(dim, hidden_dim),
-            nn.SiLU(),
+            nn.Conv2d(dim, hidden_dim, 1),
+            nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim, dim),
+            nn.Conv2d(hidden_dim, dim, 1),
             nn.Dropout(dropout)
         )
 
@@ -45,50 +45,36 @@ class FeedForward(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, dim, heads=8, dim_head=64, dropout=0.):
+    def __init__(self, dim: int, num_heads: int = 8, attn_ratio: float = 0.5, dropout: float = 0.):
         super().__init__()
-        inner_dim = dim_head * heads
-        project_out = not (heads == 1 and dim_head == dim)
-        self.dim_head = dim_head
-        self.heads = heads
-        self.scale = dim_head ** -0.5
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.key_dim = int(self.head_dim * attn_ratio)
+        self.scale = self.key_dim**-0.5
+        nh_kd = self.key_dim * num_heads
+        h = dim + nh_kd * 2
 
-        self.attend = nn.Softmax(dim=-1)
-        self.to_qkv = nn.Linear(dim, inner_dim * 3, bias=False)
-
-        self.to_out = nn.Sequential(
-            nn.Linear(inner_dim, dim),
+        self.qkv = nn.Conv2d(dim, h, 1, bias=False)
+        self.proj = nn.Sequential(
+            nn.Conv2d(dim, dim, 1),
             nn.Dropout(dropout)
-        ) if project_out else nn.Identity()
-
+        )
+        self.pe = nn.Conv2d(dim, dim, 3, 1, padding=1, groups=dim, bias=False)
 
     def forward(self, x):
         B, C, H, W = x.shape
         N = H * W
-        qkv = self.to_qkv(x).flatten(2).transpose(1, 2)
-        q, k, v = (
-            qkv.view(B, N, self.heads, self.dim_head * 3)
-            .permute(0, 2, 3, 1)
-            .split([self.dim_head, self.dim_head, self.dim_head], dim=2)
-        )
-        attn = (q.transpose(-2, -1) @ k) * (self.dim_head**-0.5)
-        attn = attn.softmax(dim=-1)
-        x = v @ attn.transpose(-2, -1)
-        x = x.permute(0, 3, 1, 2)
-        v = v.permute(0, 3, 1, 2)
-        # qkv = self.to_qkv(x).chunk(3, dim=-1)
-        # q, k, v = map(lambda t: rearrange(t, 'b p n (h d) -> b p h n d', h=self.heads), qkv)
-
-        # dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
-        # attn = self.attend(dots)
-        # out = torch.matmul(attn, v)
-        # out = rearrange(out, 'b p h n d -> b p n (h d)')
+        qkv = self.qkv(x)
         
-        x = x.reshape(B, H, W, C).permute(0, 3, 1, 2).contiguous()
-        v = v.reshape(B, H, W, C).permute(0, 3, 1, 2).contiguous()
+        q, k, v = qkv.view(B, self.num_heads, self.key_dim * 2 + self.head_dim, N).split(
+            [self.key_dim, self.key_dim, self.head_dim], dim=2
+        )
 
-        x = x + self.pe(v)
-        return self.to_out(x)
+        attn = (q.transpose(-2, -1) @ k) * self.scale
+        attn = attn.softmax(dim=-1)
+        
+        out = (v @ attn.transpose(-2, -1)).view(B, C, H, W) + self.pe(v.reshape(B, C, H, W))
+        return self.proj(out)
 
 
 class Transformer(nn.Module):
@@ -97,7 +83,7 @@ class Transformer(nn.Module):
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                PreNorm(dim, Attention(dim, heads, dim_head, dropout)),
+                PreNorm(dim, Attention(dim, num_heads=heads, attn_ratio=0.5, dropout=dropout)),
                 PreNorm(dim, FeedForward(dim, mlp_dim, dropout))
             ]))
 
@@ -109,6 +95,7 @@ class Transformer(nn.Module):
 
 
 class MV2Block(nn.Module):
+    # CSDN 迪菲赫尔曼
     def __init__(self, inp, oup, stride=1, expansion=4):
         super().__init__()
         self.stride = stride
@@ -122,7 +109,7 @@ class MV2Block(nn.Module):
                 # dw
                 nn.Conv2d(hidden_dim, hidden_dim, 3, stride, 1, groups=hidden_dim, bias=False),
                 nn.BatchNorm2d(hidden_dim),
-                nn.SiLU(),
+                nn.ReLU(),
                 # pw-linear
                 nn.Conv2d(hidden_dim, oup, 1, 1, 0, bias=False),
                 nn.BatchNorm2d(oup),
@@ -131,11 +118,11 @@ class MV2Block(nn.Module):
             self.conv = nn.Sequential(
                 nn.Conv2d(inp, hidden_dim, kernel_size=1, stride=1, bias=False),
                 nn.BatchNorm2d(hidden_dim),
-                nn.SiLU(),
+                nn.ReLU(),
                 # dw
                 nn.Conv2d(hidden_dim, hidden_dim, 3, stride, 1, groups=hidden_dim, bias=False),
                 nn.BatchNorm2d(hidden_dim),
-                nn.SiLU(),
+                nn.ReLU(),
                 # pw-linear
                 nn.Conv2d(hidden_dim, oup, 1, 1, 0, bias=False),
                 nn.BatchNorm2d(oup),
@@ -149,6 +136,7 @@ class MV2Block(nn.Module):
 
 
 class MobileViTBlock(nn.Module):
+    # CSDN 迪菲赫尔曼
     def __init__(self, dim, depth, channel, kernel_size, patch_size, mlp_dim, dropout=0.):
         super().__init__()
         self.ph = patch_size
@@ -163,11 +151,7 @@ class MobileViTBlock(nn.Module):
         y = x.clone()
         x = self.conv1(x)
         x = self.conv2(x)
-        _, _, h, w = x.shape
-        x = rearrange(x, 'b d (h ph) (w pw) -> b (ph pw) (h w) d', ph=self.ph, pw=self.pw)
         x = self.transformer(x)
-        x = rearrange(x, 'b (ph pw) (h w) d -> b d (h ph) (w pw)', h=h // self.ph, w=w // self.pw, ph=self.ph,
-                      pw=self.pw)
         x = self.conv3(x)
         x = torch.cat((x, y), 1)
         x = self.conv4(x)
