@@ -1,53 +1,144 @@
+# # Parameters
+# nc: 7 # number of classes
+# scales: # model compound scaling constants, i.e. 'model=yolov12n.yaml' will call yolov12.yaml with scale 'n'
+#   # [depth, width, max_channels]
+#   n: [0.33, 0.25, 1024] # summary: 497 layers, 2,553,904 parameters, 2,553,888 gradients, 6.2 GFLOPs
+
+# # YOLO12-turbo backbone
+# backbone:
+#   # [from, repeats, module, args]
+#   - [-1, 1, Conv,  [64, 3, 2]] # 0-P1/2
+#    #start D2S-RFB
+#   - [-1, 1, Conv,  [128, 3, 2, 1, 2]] # 1-P2/4
+
+#    #top branch   
+#   - [-1, 1, Conv, [128, 1, 1]] #2
+#   - [-1, 1, Conv, [128, 1, 1]] #3 
+
+#    #middle branch 1
+#   - [-3, 1, Conv, [128, 1, 1]] #4
+#   - [-1, 1, DepthwiseSeparableConvBN, [32, 1, 32]] #5
+#   - [-1, 1, Conv, [128, 1, 1]] #6
+
+#    #middle branch 2
+#   - [-6, 1, Conv, [128, 1, 1]] #7
+#   - [-1, 1, DepthwiseSeparableDilatedConvBN, [32, 1, 32, 3, 3, 3]] #8
+#   - [-1, 1, Conv, [128, 1, 1]] #9
+
+#    #middle branch 3
+#   - [-9, 1, Conv, [128, 1, 1]] #10
+#   - [-1, 1, DepthwiseSeparableDilatedConvBN, [32, 1, 32, 3, 5, 5]] #11
+#   - [-1, 1, Conv, [128, 1, 1]] #12
+
+#   - [[-1, -4, -7, -10, -12], 1, Shortcut, [1]] #13
+#   - [-1, 1, DepthwiseSeparableConvBN, [32, 1, 32]] #14
+
+#    #top branch 2  
+#   - [-1, 1, Conv, [128, 1, 1]] #15
+#   - [-1, 1, DepthwiseSeparableDilatedConvBN, [32, 1, 32, 5, 6, 3]] #16
+#   - [-1, 1, Conv, [128, 1, 1]] #17
+
+#    #middle branch 2
+#   - [-4, 1, Conv, [128, 1, 1]] #18
+#   - [-1, 1, DepthwiseSeparableDilatedConvBN, [32, 1, 32, 5, 2, 1]] #19  
+#   - [-1, 1, Conv, [128, 1, 1]] #20
+
+#    #middle branch 3
+#   - [[-1, -4, -7], 1, Shortcut, [1]] #21
+#   - [-1, 1, DepthwiseSeparableConvBN, [32, 1, 32]] #22
+#    #end D2S-RFB
+
+#   - [-1, 2, C3k2,  [256, False, 0.25]]
+#   - [-1, 1, Conv,  [256, 3, 2, 1, 4]] # 24 old 3-P3/8
+#   - [-1, 2, C3k2,  [512, False, 0.25]]
+#   - [-1, 1, Conv,  [512, 3, 2]] # 26 old 5-P4/16
+#   - [-1, 2, C3k2, [512, True]] #27
+#   - [-1, 1, Conv, [1024, 3, 2]] # 28-P5/32
+#   - [-1, 2, C3k2, [1024, True]] # 29
+#   - [-1, 1, SPPF, [1024, 5, 3, True]] # 30
+#   - [-1, 2, C2PSA, [1024]] # 31
+
+# # YOLO12-turbo head
+# head:
+#   - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+#   - [[-1, 27], 1, Concat, [1]] # cat backbone P4
+#    #HP_CSE 1
+#   - [-1, 1, HP_CSE, [384, 16]]
+#   - [-1, 2, C3k2, [512, False]] # 33 old 11
+
+#   - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+#   - [[-1, 25], 1, Concat, [1]] # cat backbone P3
+#    #HP_CSE 2
+#   - [-1, 1, HP_CSE, [256, 16]]
+#   - [-1, 2, C3k2, [256, False]] # 37 old 14
+
+#   - [-1, 1, Conv, [256, 3, 2]]
+#   - [[-1, 35], 1, Concat, [1]] # cat head P4
+#    #HP_CSE 3
+#   - [-1, 1, HP_CSE, [192, 16]]   
+#   - [-1, 2, C3k2, [512, False]] # 41 old 17
+
+#   - [-1, 1, Conv, [512, 3, 2]]
+#   - [[-1, 31], 1, Concat, [1]] # cat head P5
+#    #HP_CSE 4
+#   - [-1, 1, HP_CSE, [384, 16]]
+#   - [-1, 2, C3k2, [1024, True]] # 45 old 20 (P5/32-large)
+
+#   - [[39, 43, 47], 1, Detect, [nc]] # Detect(P3, P4, P5)
+
+# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
+# YOLO26 with R_ELAN (Residual Efficient Layer Aggregation Network)
+# Inspired by YOLOv12's R_ELAN for better feature aggregation and training stability
+
 # Parameters
-nc: 2 # number of classes
-scales: # model compound scaling constants, i.e. 'model=yolov8n.yaml' will call yolov8.yaml with scale 'n'
-  # [depth, width, max_channels]
-depth_multiple: 0.33  # model depth multiple
-width_multiple: 0.25  # layer channel multiple
-# YOLOv8.0n backbone
+# YOLO26 with corrected R-ELAN
+
+# Parameters
+nc: 7
+end2end: True
+reg_max: 1
+scales:
+  n: [0.50, 0.25, 1024]
+  s: [0.50, 0.50, 1024]
+  m: [0.50, 1.00, 512]
+  l: [1.00, 1.00, 512]
+  x: [1.00, 1.50, 512]
+
+# Backbone with R-ELAN
 backbone:
-  # # [from, repeats, module, args]
-  - [-1, 1, Conv, [32, 3, 2]] # 0-P1/2
-  - [-1, 1, Conv, [64, 3, 2]] # 1-P2/4
-  # - [-1, 1, Conv, [128, 3, 2]] # 1-P2/4
-  - [-1, 3, C2f, [64, True]]
-  - [-1, 1, Conv, [128, 3, 2]] # 3-P3/8
-  - [-1, 6, C2f, [128, True]]
-  - [-1, 1, Conv, [192, 3, 2]] # 5-P4/16
-  - [-1, 6, C2f, [192, True]]
-  - [-1, 1, Conv, [256, 3, 2]] # 7-P5/32
-  - [-1, 3, C2f, [256, True]]
-  - [-1, 1, SPPF, [320, 5]] # 9
-    # [from, repeats, module, args]
-  # - [-1, 1, Conv, [64, 3, 2]] # 0-P1/2
-  # - [-1, 1, Conv, [128, 3, 2]] # 1-P2/4
-  # - [-1, 3, C2f, [128, True]]
-  # - [-1, 1, Conv, [256, 3, 2]] # 3-P3/8
-  # - [-1, 6, C2f, [256, True]]
-  # - [-1, 1, Conv, [512, 3, 2]] # 5-P4/16
-  # - [-1, 6, C2f, [512, True]]
-  # - [-1, 1, Conv, [1024, 3, 2]] # 7-P5/32
-  # - [-1, 3, C2f, [1024, True]]
-  # - [-1, 1, SPPF, [1024, 5]] # 9
+  - [-1, 1, Conv, [64, 3, 2]]                    # 0-P1/2
+  - [-1, 1, Conv, [128, 3, 2]]                   # 1-P2/4
 
+  - [-1, 1, R_ELAN, [256, 0.5, 0.01]]            # 2  (n=1 repeat by default)
+  - [-1, 1, Conv, [256, 3, 2]]                   # 3-P3/8
 
-# YOLOv8.0n head
+  - [-1, 1, R_ELAN, [512, 0.5, 0.01]]            # 4
+  - [-1, 1, Conv, [512, 3, 2]]                   # 5-P4/16
+
+  - [-1, 2, R_ELAN, [512, 0.5, 0.01]]            # 6   ← here we use 2 repeats
+  - [-1, 1, Conv, [1024, 3, 2]]                  # 7-P5/32
+
+  - [-1, 2, R_ELAN, [1024, 0.5, 0.01]]           # 8
+  - [-1, 1, SPPF, [1024, 5, 3, True]]            # 9
+  - [-1, 2, C2PSA, [1024]]                       # 10
+
+# Head (you can also replace some C3k2 with R_ELAN later)
 head:
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
-  - [[-1, 6], 1, Concat, [1]] # cat backbone P4
-  - [-1, 2, C3k2, [320, False]] # 12
+  - [[-1, 6], 1, Concat, [1]]
+  - [-1, 2, C3k2, [512, True]]                   # 13
 
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
-  - [[-1, 4], 1, Concat, [1]] # cat backbone P3
-  - [-1, 2, C3k2, [320, False]] # 15 (P3/8-small)
+  - [[-1, 4], 1, Concat, [1]]
+  - [-1, 2, C3k2, [256, True]]                   # 16
 
   - [-1, 1, Conv, [256, 3, 2]]
-  - [[-1, 12], 1, Concat, [1]] # cat head P4
-  - [-1, 2, C3k2, [512, False]] # 18 (P4/16-medium)
+  - [[-1, 13], 1, Concat, [1]]
+  - [-1, 2, C3k2, [512, True]]                   # 19
 
+  - [-1, 1, Conv, [512, 3, 2]]
+  - [[-1, 10], 1, Concat, [1]]
+  - [-1, 1, C3k2, [1024, True, 0.5, True]]       # 22
 
-  - [-1, 1, Conv, [320, 3, 2]]
-  - [[-1, 9], 1, Concat, [1]] # cat head P5
-  - [-1, 2, C3k2, [320, True]] # 21 (P5/32-large)
-
-  - [[15, 18, 21], 1, Detect, [nc]] # Detect(P3, P4, P5)
+  - [[16, 19, 22], 1, Detect, [nc]]

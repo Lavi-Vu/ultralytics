@@ -2099,9 +2099,9 @@ class DepthwiseSeparableConvBN(nn.Module):
     def __init__(self, nin, kernels_per_layer, nout, act=True): 
         super(DepthwiseSeparableConvBN, self).__init__() 
         self.depthwise = nn.Conv2d(nin, nin * kernels_per_layer, kernel_size=3, padding=1, groups=nin) 
-        self.pointwise = nn.Conv2d(nin * kernels_per_layer, nout, kernel_size=1) 
+        self.pointwise = nn.Conv2d(nin * kernels_per_layer, nout, kernel_size=1)
         self.bn = nn.BatchNorm2d(nout)
-        self.act = nn.SiLU() if act is True else (act if isinstance(act, nn.Module) else nn.Identity())
+        self.act = nn.ReLU6() if act is True else (act if isinstance(act, nn.Module) else nn.Identity())
   
     def forward(self, x): 
         out = self.depthwise(x) 
@@ -2119,7 +2119,7 @@ class DepthwiseSeparableDilatedConvBN(nn.Module):
         self.depthwise = nn.Conv2d(nin, nin * kernels_per_layer, kernel_size=kernel_size, padding=autopad(kernel_size, p), dilation=d, groups=nin) 
         self.pointwise = nn.Conv2d(nin * kernels_per_layer, nout, kernel_size=1) 
         self.bn = nn.BatchNorm2d(nout)
-        self.act = nn.SiLU() if act is True else (act if isinstance(act, nn.Module) else nn.Identity())
+        self.act = nn.ReLU6() if act is True else (act if isinstance(act, nn.Module) else nn.Identity())
   
     def forward(self, x): 
         out = self.depthwise(x) 
@@ -2198,3 +2198,28 @@ class Shortcut(nn.Module):
             return x[0]+x[1]+x[2]+x[3]
         elif len(x) == 5:
             return x[0]+x[1]+x[2]+x[3]+x[4]
+        
+class R_ELAN(nn.Module):
+    def __init__(self, c1, c2, n=1, e=0.5, scale=0.01):  # c1=input channels, c2=output, n=repeats, e=expansion, scale=residual scale
+        super().__init__()
+        c_ = int(c2 * e)  # hidden channels
+        self.scale = scale
+        self.conv1 = Conv(c1, c_, 1, 1)  # transition
+        
+        self.blocks = nn.ModuleList()
+        for _ in range(n):  # usually small n (1-2)
+            self.blocks.append(nn.Sequential(
+                Conv(c_, c_, 3, 1),      # or DepthwiseSeparable + 7x7 separable for efficiency
+                Conv(c_, c_, 1, 1)
+            ))
+        
+        self.conv2 = Conv(c_ * (n + 1), c2, 1, 1)  # final aggregation bottleneck
+
+    def forward(self, x):
+        y = self.conv1(x)
+        outs = [y]
+        for block in self.blocks:
+            outs.append(block(outs[-1]))
+        out = torch.cat(outs, dim=1)
+        out = self.conv2(out)
+        return x * self.scale + out   # scaled residual connection

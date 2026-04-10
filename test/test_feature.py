@@ -1,105 +1,149 @@
-from ultralytics import YOLO
 import torch
-import cv2
 import os
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+from ultralytics import YOLO
+import math
 
-# model = YOLO("runs/multi_label_classify/train16/weights/best.pt")
-model = YOLO("/media/lavi/Data/ultralytics/ultralytics/cfg/models/v8/pvn_detect.yaml")
-# model=YOLO('/media/lavi/Data/ultralytics/ultralytics/cfg/models/11/yolo11.yaml')
-# img_path = "/home/lavi/Downloads/a5d55df7-02b6-427d-ad48-be0703a4fe58.jpeg"
-img_path = "/home/lavi/Downloads/20260108_135341_01_cam_jpg.rf.76370d8e6ebeca9c63187101bfd3efe4.jpg"
-# img_path = "/home/lavi/Pictures/data_human_attr/data_gen/CCTV_person_resize/male/glasses_backpack_pants_upperLongSleeve_upred_lowerLong_downpink_1.png"
-img = cv2.imread(img_path)
-img = cv2.resize(img, (640, 640))
-img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-img_tensor = torch.tensor(img_rgb).permute(2,0,1).float().unsqueeze(0) / 255.0
+# =========================
+# CONFIG
+# =========================
+MODEL_PATH = "yolo11n.pt"
+IMAGE_PATH = "/home/lavi/Pictures/Screenshots/Screenshot from 2026-04-06 15-59-05.png"
 
-os.makedirs("features", exist_ok=True)
+OUTPUT_DIR = "feature_outputs"
+GRID_PATH = os.path.join(OUTPUT_DIR, "paper_style_heatmap.png")
+LAYER_DIR = os.path.join(OUTPUT_DIR, "layers")
+FEATURE_DIR = os.path.join(OUTPUT_DIR, "feature_maps")
 
-feature_maps = []
+IMG_SIZE = 640
+DISPLAY_SIZE = 256   # 🔥 smaller map → bigger visualization
+COLS = 6
+
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(LAYER_DIR, exist_ok=True)
+os.makedirs(FEATURE_DIR, exist_ok=True)
+
+# =========================
+# LOAD MODEL
+# =========================
+model = YOLO(MODEL_PATH)
+model.model.eval()
+
+# =========================
+# LOAD IMAGE
+# =========================
+img = cv2.imread(IMAGE_PATH)
+img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
+
+img_tensor = torch.from_numpy(img).float() / 255.0
+img_tensor = img_tensor.permute(2, 0, 1).unsqueeze(0)
+
+# =========================
+# HOOK ALL LAYERS
+# =========================
+features = []
 
 def hook_fn(module, input, output):
-    # Một số layer trả về tuple → lấy output chính
-    if isinstance(output, (tuple, list)):
-        output = output[0]
-    if not torch.is_tensor(output):
-        return
-    feature_maps.append(output.cpu().detach())
+    if isinstance(output, torch.Tensor):
+        features.append(output.detach().cpu())
 
 hooks = []
 for layer in model.model.model:
     hooks.append(layer.register_forward_hook(hook_fn))
 
+# =========================
+# FORWARD PASS
+# =========================
 with torch.no_grad():
     _ = model.model(img_tensor)
 
 for h in hooks:
     h.remove()
 
-print("Số feature map lấy được:", len(feature_maps))
+print(f"Captured {len(features)} layers")
 
+# =========================
+# SAVE FEATURE MAP CHANNELS (FLAT)
+# =========================
+MAX_CHANNELS = 8  # avoid explosion
 
+for layer_idx, feat in enumerate(features):
+    feat = feat[0]  # [C,H,W]
+    C = feat.shape[0]
 
-import numpy as np
-import cv2
-import torch
+    num_show = min(C, MAX_CHANNELS)
 
-for i, fmap in enumerate(feature_maps):
+    for ch in range(num_show):
+        fmap = feat[ch].numpy()
 
-    # Bỏ qua feature không phải tensor
-    if not torch.is_tensor(fmap):
-        print(f"Skip layer {i} (not tensor)")
-        continue
+        fmap = (fmap - fmap.min()) / (fmap.max() - fmap.min() + 1e-6)
+        fmap = (fmap * 255).astype(np.uint8)
 
-    fmap = fmap.squeeze(0)  # remove batch dim
+        fmap = cv2.resize(fmap, (DISPLAY_SIZE, DISPLAY_SIZE))
 
-    # fmap shape phải là (C,H,W)
-    if fmap.ndim != 3:
-        print(f"Skip layer {i} (invalid ndim: {fmap.ndim}, shape: {fmap.shape})")
-        continue
+        save_path = os.path.join(FEATURE_DIR, f"layer{layer_idx:03d}_ch{ch:02d}.png")
+        cv2.imwrite(save_path, fmap)
 
-    C, H, W = fmap.shape
+print(f"✅ Feature maps saved to: {FEATURE_DIR}")
 
-    # lấy kênh đầu tiên
-    fm = fmap[0].cpu().numpy()
+# =========================
+# PROCESS + SAVE EACH LAYER (HEATMAP OVERLAY)
+# =========================
+overlay_maps = []
 
-    # normalize về 0–255
-    fm_min, fm_max = fm.min(), fm.max()
-    if fm_max - fm_min < 1e-6:
-        print(f"Skip layer {i} (flat feature map)")
-        continue
+for i, feat in enumerate(features):
+    feat = feat[0]
 
-    fm = (fm - fm_min) / (fm_max - fm_min)
-    fm = (fm * 255).astype(np.uint8)
+    # 🔥 use max activation (sharper)
+    fmap = torch.max(feat, dim=0)[0].numpy()
 
-    # lưu ảnh
-    save_path = f"features/layer_{i}.png"
-    cv2.imwrite(save_path, fm)
-    print("Saved", save_path)
+    fmap = (fmap - fmap.min()) / (fmap.max() - fmap.min() + 1e-6)
+    fmap = cv2.resize(fmap, (DISPLAY_SIZE, DISPLAY_SIZE)) 
 
-# scale = 16  # scale factor, có thể chỉnh lớn hơn nếu muốn
+    # ---- warm heatmap (like your image) ----
+    heatmap = (fmap * 255).astype(np.uint8)
+    heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_INFERNO)
 
-# for i, fmap in enumerate(feature_maps):
-#     if not torch.is_tensor(fmap):
-#         continue
+    # resize original to match
+    img_small = cv2.resize(img, (DISPLAY_SIZE, DISPLAY_SIZE))
 
-#     fmap = fmap.squeeze(0)  # remove batch dim
-#     if fmap.ndim != 3:
-#         continue
+    # overlay
+    overlay = cv2.addWeighted(img_small, 0.6, heatmap, 0.4, 0)
 
-#     C, H, W = fmap.shape
-#     fm = fmap[0].cpu().numpy()  # lấy channel đầu tiên
+    overlay_maps.append(overlay)
 
-#     fm_min, fm_max = fm.min(), fm.max()
-#     if fm_max - fm_min < 1e-6:
-#         continue
+    # save each layer
+    save_path = os.path.join(LAYER_DIR, f"layer_{i:03d}.png")
+    cv2.imwrite(save_path, cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR))
 
-#     fm = (fm - fm_min) / (fm_max - fm_min) * 255
-#     fm = fm.astype(np.uint8)
+print(f"✅ Saved individual layers to: {LAYER_DIR}")
 
-#     # resize ảnh lên lớn hơn
-#     fm_large = cv2.resize(fm, (W*scale, H*scale), interpolation=cv2.INTER_NEAREST)
+# =========================
+# CREATE GRID (PAPER STYLE)
+# =========================
+total = len(overlay_maps) + 1
+rows = math.ceil(total / COLS)
 
-#     save_path = f"features/layer_{i}_large.png"
-#     cv2.imwrite(save_path, fm_large)
-#     print("Saved", save_path)
+plt.figure(figsize=(COLS * 4, rows * 4))  # 🔥 bigger tiles
+
+# Input image
+plt.subplot(rows, COLS, 1)
+plt.imshow(cv2.resize(img, (DISPLAY_SIZE, DISPLAY_SIZE)))
+plt.title("Input")
+plt.axis('off')
+
+# Feature overlays
+for i, overlay in enumerate(overlay_maps):
+    plt.subplot(rows, COLS, i + 2)
+    plt.imshow(overlay)
+    plt.title(f"L{i}")
+    plt.axis('off')
+
+plt.tight_layout()
+plt.savefig(GRID_PATH, dpi=300)
+plt.show()
+
+print(f"✅ Grid saved to: {GRID_PATH}")
