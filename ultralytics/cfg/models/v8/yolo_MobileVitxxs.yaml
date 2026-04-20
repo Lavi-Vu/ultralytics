@@ -2,7 +2,7 @@
 # YOLOv8 object detection model with P3-P5 outputs. For Usage examples see https://docs.ultralytics.com/tasks/detect
 
 # Parameters
-nc: 7  # number of classes
+nc: 80  # number of classes
 scales: # model compound scaling constants, i.e. 'model=yolov8n.yaml' will call yolov8.yaml with scale 'n'
 depth_multiple: 1.0  # model depth multiple
 width_multiple: 1.0  # layer channel multiple
@@ -13,8 +13,9 @@ backbone:
   - [-1, 1, Conv, [16, 3, 2]]  # 0-P1/2
   - [-1, 1, MV2Block, [16, 1, 2]]  # 1
   - [-1, 1, MV2Block, [24, 2, 2]]  # 2-p2
-  - [-1, 1, MV2Block, [24, 1, 2]]  # 3
-  - [-1, 1, MV2Block, [24, 1, 2]]  # 4
+  - [-1, 2, C3k2, [24, False, 0.25]]
+  # - [-1, 1, MV2Block, [24, 1, 2]]  # 3
+  # - [-1, 1, MV2Block, [24, 1, 2]]  # 4
   - [-1, 1, MV2Block, [48, 2, 2]]  # 5-P3
   - [-1, 1, MobileViTBlock, [64, 2, 3, 2, 128, 0]]
   - [-1, 1, MV2Block, [64, 2, 2]]  # 7-P4
@@ -25,19 +26,19 @@ backbone:
 # YOLOv8.0n head
 head:
   - [-1, 1, nn.Upsample, [None, 2, 'nearest']]
-  - [[-1, 8], 1, Concat, [1]]  # cat backbone P4
-  - [-1, 1, C2f, [48]]  # 13
+  - [[-1, 6], 1, Concat, [1]]  # cat backbone P4
+  - [-1, 1, C3k2, [48, True]]  # 13
 
   - [-1, 1, nn.Upsample, [None, 2, 'nearest']]
-  - [[-1, 6], 1, Concat, [1]]  # cat backbone P3
-  - [-1, 1, C2f, [24]]  # 16 (P3/8-small)
+  - [[-1, 4], 1, Concat, [1]]  # cat backbone P3
+  - [-1, 1, C3k2, [24, True]]  # 16 (P3/8-small)
 
   - [-1, 1, Conv, [24, 3, 2]]
-  - [[-1, 13], 1, Concat, [1]]  # cat head P4
-  - [-1, 1, C2f, [48]]  # 19 (P4/16-medium)
+  - [[-1, 12], 1, Concat, [1]]  # cat head P4
+  - [-1, 1, C3k2, [48, True]]  # 19 (P4/16-medium)
 
   - [-1, 1, Conv, [48, 3, 2]]
-  - [[-1, 10], 1, Concat, [1]]  # cat head P5
-  - [-1, 1, C2f, [96]]  # 22 (P5/32-large)
+  - [[-1, 9], 1, Concat, [1]]  # cat head P5
+  - [-1, 1, C3k2, [96, True, 0.5, True]]  # 22 (P5/32-large)
 
-  - [[16, 19, 22], 1, Detect, [nc]]  # Detect(P3, P4, P5)
+  - [[15, 18, 21], 1, Detect, [nc]]  # Detect(P3, P4, P5)
