@@ -1,0 +1,117 @@
+# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+#
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  YOLO26 + FastViT Hybrid  —  Ultralytics YOLO26 native config format   ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+#
+# Backbone  : FastViT-SA12 (Apple ICCV 2023) — hybrid CNN-Transformer
+# Neck/Head : Stock YOLO26 (C3k2, SPPF-shortcut, C2PSA, Dual Detect)
+#
+# WHAT CAUSED THE CRASH (weight of size [64, 0, 1, 1])
+# ──────────────────────────────────────────────────────
+# parse_model tracks channels in ch[]. When a backbone layer returns a LIST
+# of tensors, parse_model can't infer output channels → stores 0 → every
+# downstream Conv gets in_channels=0 → RuntimeError.
+#
+# FIX: fastvit_backbone.patch_ultralytics() replaces parse_model with a
+# channel-aware version that appends one ch[] entry per FastViT stage.
+#
+# USAGE
+# ─────
+#   from fastvit_backbone import patch_ultralytics
+#   patch_ultralytics()                     # must run FIRST
+#
+#   from ultralytics import YOLO
+#   model = YOLO("yolo26-fastvit.yaml")     # build from scratch
+#   model.train(data="coco.yaml", epochs=300)
+#
+# CHANNEL FLOW (fastvit_sa12, width_multiple=1.0)
+# ─────────────────────────────────────────────────
+#  Layer │ Module            │ Output ch  │ Stride
+#  ──────┼───────────────────┼────────────┼───────
+#    0   │ FastViTBackbone   │ list:      │
+#        │   stage P3        │   128      │ /8
+#        │   stage P4        │   256      │ /16
+#        │   stage P5        │   512      │ /32
+#    1   │ Index(0) → P3     │   128      │ /8
+#    2   │ Index(1) → P4     │   256      │ /16
+#    3   │ Index(2) → P5     │   512      │ /32
+#    4   │ SPPF(P5)          │   512      │ /32
+#    5   │ C2PSA(P5)         │   512      │ /32
+#    6   │ Upsample ×2       │   512      │ /16
+#    7   │ Concat(6,2)       │   768      │ /16
+#    8   │ C3k2 → 256        │   256      │ /16
+#    9   │ Upsample ×2       │   256      │ /8
+#   10   │ Concat(9,1)       │   384      │ /8
+#   11   │ C3k2 → 256        │   256      │ /8   ← P3 detect
+#   12   │ Conv s2           │   256      │ /16
+#   13   │ Concat(12,8)      │   512      │ /16
+#   14   │ C3k2 → 512        │   512      │ /16  ← P4 detect
+#   15   │ Conv s2           │   512      │ /32
+#   16   │ Concat(15,5)      │  1024      │ /32
+#   17   │ C3k2 → 512        │   512      │ /32  ← P5 detect
+#   18   │ Detect[11,14,17]  │   nc boxes │
+
+# ── Parameters ───────────────────────────────────────────────────────────────
+nc:      80
+end2end: True   # YOLO26 NMS-free one-to-one E2E head
+reg_max:  1     # DFL bins = 1  (effectively DFL-free, YOLO26 design)
+
+scales:
+  # [depth_multiple, width_multiple, max_channels]
+  # NOTE: depth/width scale the YOLO26 neck C3k2 blocks.
+  # FastViT backbone channels are FIXED and do not scale with width_multiple.
+  n: [0.50, 0.25, 1024]
+  s: [0.50, 0.50, 1024]
+  m: [0.50, 1.00,  512]
+  l: [1.00, 1.00,  512]
+  x: [1.00, 1.50,  512]
+
+# ── Backbone ─────────────────────────────────────────────────────────────────
+# FastViTBackbone at layer 0 returns List[P3, P4, P5].
+# The patched parse_model appends 3 channel entries to ch[]:
+#   ch[1]=128 (P3), ch[2]=256 (P4), ch[3]=512 (P5)  for fastvit_sa12
+#
+# args: [model_name, pretrained, out_indices]
+#   out_indices [1,2,3] → P3(/8), P4(/16), P5(/32)
+backbone:
+  - [-1, 1, FastViTBackbone, ["fastvit_sa12", True, [1, 2, 3]]]  # 0
+
+# ── Head ─────────────────────────────────────────────────────────────────────
+# Index layers extract individual tensors from the backbone's list output.
+# Index(k) selects item k from the saved tensor list of layer `f`.
+#
+# Then the standard YOLO26 neck topology (SPPF-shortcut → C2PSA → PAN-C3k2)
+# is preserved exactly.
+head:
+  # ── Extract individual FPN scales ────────────────────────────────────────
+  - [0, 1, Index, [0]]                           # 1 — P3  128ch /8
+  - [0, 1, Index, [1]]                           # 2 — P4  256ch /16
+  - [0, 1, Index, [2]]                           # 3 — P5  512ch /32
+
+  # ── SPPF + C2PSA on P5 (mirrors YOLO26 backbone layers 9–10) ─────────────
+  # SPPF args: [out_ch, kernel, n_pool, shortcut]
+  # shortcut=True is YOLO26's enhancement (adds residual inside SPPF)
+  - [3,  1, SPPF,        [512, 5, 3, True]]      # 4 — SPPF (shortcut) 512ch
+  - [4,  2, C2PSA,       [1024]]                  # 5 — C2PSA global attn 512ch
+
+  # ── FPN top-down ──────────────────────────────────────────────────────────
+  - [5,  1, nn.Upsample, [None, 2, "nearest"]]   # 6 — upsample /32→/16
+  - [[-1, 2], 1, Concat, [1]]                    # 7 — cat P5up+P4 → 768ch
+  - [-1, 2, C3k2,        [256, True]]             # 8 — fuse 256ch  /16
+
+  - [8,  1, nn.Upsample, [None, 2, "nearest"]]   # 9 — upsample /16→/8
+  - [[-1, 1], 1, Concat, [1]]                    # 10 — cat P4up+P3 → 384ch
+  - [-1, 2, C3k2,        [256, True]]             # 11 — P3/8-small  ← detect 0
+
+  # ── PAN bottom-up ─────────────────────────────────────────────────────────
+  - [11, 1, Conv,        [256, 3, 2]]             # 12 — stride-2 /8→/16
+  - [[-1, 8], 1, Concat, [1]]                    # 13 — cat+P4fused → 512ch
+  - [-1, 2, C3k2,        [512, True]]             # 14 — P4/16-medium ← detect 1
+
+  - [14, 1, Conv,        [512, 3, 2]]             # 15 — stride-2 /16→/32
+  - [[-1, 5], 1, Concat, [1]]                    # 16 — cat+C2PSA → 1024ch
+  - [-1, 2, C3k2,        [512, True]]             # 17 — P5/32-large  ← detect 2
+
+  # ── YOLO26 Dual Detection Head (NMS-free E2E, no DFL) ────────────────────
+  - [[11, 14, 17], 1, Detect, [nc]]              # 18 — Detect(P3, P4, P5)

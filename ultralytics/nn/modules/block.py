@@ -2229,3 +2229,25 @@ class R_ELAN(nn.Module):
         out = torch.cat(outs, dim=1)
         out = self.conv2(out)
         return x * self.scale + out   # scaled residual connection
+
+class CATHBlock(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(channels, channels, 3, padding=1, bias=False),
+            nn.BatchNorm2d(channels), nn.ReLU(inplace=True))
+        self.attn = nn.MultiheadAttention(embed_dim=channels, num_heads=8)
+        self.norm = nn.LayerNorm(channels)
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(2*channels, channels, 1, bias=False),
+            nn.BatchNorm2d(channels), nn.ReLU(inplace=True))
+    def forward(self, x):
+        # x: [B, C, H, W]
+        y1 = self.conv3(x)                     # [B, C, H, W]
+        B,C,H,W = x.shape
+        x_flat = x.view(B, C, H*W).permute(2,0,1)  # [HW, B, C]
+        attn_out, _ = self.attn(x_flat, x_flat, x_flat)  # [HW, B, C]
+        attn_out = attn_out.permute(1,2,0).view(B, C, H, W)
+        y2 = self.norm(attn_out.permute(0,2,3,1)).permute(0,3,1,2)
+        y = torch.cat([y1, y2], dim=1)         # [B, 2C, H, W]
+        return self.conv1(y)                   # [B, C, H, W]

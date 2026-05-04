@@ -1,0 +1,75 @@
+nc: 80
+depth_multiple: 0.33
+width_multiple: 0.25
+
+# -------- BACKBONE --------
+backbone:
+  - [-1, 1, Conv, [32, 3, 2]]        # 0
+  - [-1, 1, Conv, [64, 3, 2]]        # 1
+
+  - [-1, 1, EdgeGhostBottleneck, [64]]
+  - [-1, 1, RepDepthwiseBlock, []]
+
+  - [-1, 1, Conv, [96, 3, 2]]        # P3
+  - [-1, 1, EdgeGhostBottleneck, [96]]
+  - [-1, 1, RepDepthwiseBlock, []]
+
+  - [-1, 1, Conv, [128, 3, 2]]       # P4
+  - [-1, 1, EdgeGhostBottleneck, [128]]
+  - [-1, 1, RepDepthwiseBlock, []]
+
+  - [-1, 1, Conv, [192, 3, 2]]       # P5
+  - [-1, 1, EdgeGhostBottleneck, [192]]
+  - [-1, 1, RepDepthwiseBlock, []]
+
+  - [-1, 1, SPPF, [192, 5]]
+
+# -------- FUSED HEAD --------
+head:
+  # # P5 → P4
+  # - [-1, 1, nn.Upsample, [None, 2, nearest]]
+  # - [[-1, 8], 1, Concat, [1]]
+  # - [-1, 1, Conv, [128, 1, 1]]          # 🔥 compression
+  # - [-1, 1, EdgeGhostBottleneck, [128]]
+  # - [-1, 1, LiteAttentionFusion, []]    # 17
+
+  # # P4 → P3
+  # - [-1, 1, nn.Upsample, [None, 2, nearest]]
+  # - [[-1, 5], 1, Concat, [1]]
+  # - [-1, 1, Conv, [96, 1, 1]]           # 🔥 compression
+  # - [-1, 1, EdgeGhostBottleneck, [96]]
+  # - [-1, 1, LiteAttentionFusion, []]    # 21 (P3)
+
+  # # P3 → P4
+  # - [-1, 1, Conv, [96, 3, 2]]
+  # - [[-1, 17], 1, Concat, [1]]
+  # - [-1, 1, Conv, [128, 1, 1]]          # 🔥 compression
+  # - [-1, 1, EdgeGhostBottleneck, [128]]
+  # - [-1, 1, LiteAttentionFusion, []]    # 25 (P4)
+
+  # # P4 → P5
+  # - [-1, 1, Conv, [128, 3, 2]]
+  # - [[-1, 13], 1, Concat, [1]]
+  # - [-1, 1, Conv, [192, 1, 1]]          # 🔥 compression
+  # - [-1, 1, EdgeGhostBottleneck, [192]]
+  # - [-1, 1, LiteAttentionFusion, []]    # 29 (P5)
+
+  # - [[21, 25, 29], 1, Detect, [nc]]
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 9], 1, Concat, [1]] # cat backbone P4
+  - [-1, 2, C3k2, [512, True]] # 16
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 6], 1, Concat, [1]] # cat backbone P3
+  - [-1, 2, C3k2, [256, True]] # 19 (P3/8-small)
+
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [[-1, 16], 1, Concat, [1]] # cat head P4
+  - [-1, 2, C3k2, [512, True]] # 22 (P4/16-medium)
+
+  - [-1, 1, Conv, [512, 3, 2]]
+  - [[-1, 13], 1, Concat, [1]] # cat head P5
+  - [-1, 1, C3k2, [1024, True, 0.5, True]] # 25 (P5/32-large)
+
+  - [[19, 22, 25], 1, Detect, [nc]]

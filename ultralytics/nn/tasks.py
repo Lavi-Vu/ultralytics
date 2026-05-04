@@ -22,6 +22,7 @@ from ultralytics.nn.backbone.convnext import ConvNeXt_Stem, ConvNeXt_Block, Conv
 from ultralytics.nn.head.dualdetect import DualDDetect, DDetect
 from ultralytics.nn.head.head_improve import Detect_improve
 from ultralytics.nn.backbone.EfficentNet import stem, MBConvBlock
+from ultralytics.nn.backbone.edge import EdgeGhostBottleneck, LiteAttentionFusion, RepDepthwiseBlock
 # ---------- End Custom Backbones Import -----------
 from ultralytics.nn.autobackend import check_class_names
 from ultralytics.nn.modules import (
@@ -1815,6 +1816,12 @@ def parse_model(d, ch, verbose=True):
             args = [c1, c2, *args[1:]]
         elif m is Shortcut:
             c2 = ch[f[0]]
+        elif m is EdgeGhostBottleneck:
+            c1, c2 = ch[f], args[0]
+            args = [c1, c2, *args[1:]]
+
+        elif m in {LiteAttentionFusion, RepDepthwiseBlock}:
+            args = [ch[f], *args]
         ##### END ADDITION MODULES #####
         else:
             c2 = ch[f]
