@@ -109,6 +109,7 @@ from .transformer import (
     TransformerEncoderLayer,
     TransformerLayer,
 )
+from .lite_transformer import LiteTransformerBlock
 
 __all__ = (
     "AIFI",

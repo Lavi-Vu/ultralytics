@@ -3,7 +3,7 @@ from ultralytics import YOLO
 from copy import deepcopy
 from ultralytics.nn.tasks import parse_model
 # 🔧 Load your models
-model= YOLO('/home/lavi/Documents/ultralytics/ultralytics/cfg/models/edge.yaml')
+model= YOLO('/home/lavi/Documents/ultralytics/ultralytics/cfg/models/v8/my_custom.yaml')
 
 # model.info(verbose=True, detailed=False)  # Print model information
 # _, _ = parse_model(deepcopy(model.yaml), ch=3, verbose=True)
