@@ -22,7 +22,9 @@ from ultralytics.nn.backbone.convnext import ConvNeXt_Stem, ConvNeXt_Block, Conv
 from ultralytics.nn.head.dualdetect import DualDDetect, DDetect
 from ultralytics.nn.head.head_improve import Detect_improve
 from ultralytics.nn.backbone.EfficentNet import stem, MBConvBlock
-from ultralytics.nn.backbone.edge import EdgeGhostBottleneck, LiteAttentionFusion, RepDepthwiseBlock
+from ultralytics.nn.backbone.edge import EdgeGhostBottleneck, LiteAttentionFusion, RepDepthwiseBlock, RepMixer, LiteAttention
+from ultralytics.nn.backbone.fastvit import FastViTBackbone
+from ultralytics.nn.modules import LiteTransformerBlock
 # ---------- End Custom Backbones Import -----------
 from ultralytics.nn.autobackend import check_class_names
 from ultralytics.nn.modules import (
@@ -1652,7 +1654,9 @@ def parse_model(d, ch, verbose=True):
             BasicStage,
             PatchEmbed_FasterNet, 
             PatchMerging_FasterNet,
-            HyperComputeModule
+            HyperComputeModule,
+            FastViTBackbone,
+            LiteTransformerBlock,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1672,6 +1676,8 @@ def parse_model(d, ch, verbose=True):
             C2fCIB,
             C2PSA,
             A2C2f,
+            LiteTransformerBlock,
+
         }
     )
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
@@ -1687,12 +1693,55 @@ def parse_model(d, ch, verbose=True):
                 with contextlib.suppress(ValueError):
                     args[j] = locals()[a] if a in locals() else ast.literal_eval(a)
         n = n_ = max(round(n * depth), 1) if n > 1 else n  # depth gain
+        if m is FastViTBackbone:
+            model_name = args[0]
+            stage_idx = args[1]
+
+            m_ = FastViTBackbone(
+                model_name=model_name,
+                stage_idx=stage_idx,
+                pretrained=True
+            )
+
+            c2 = m_.channels
+
+            t = str(m)[8:-2].replace("__main__.", "")
+            m_.np = sum(x.numel() for x in m_.parameters())
+
+            m_.i, m_.f, m_.type = i, f, t
+
+            if verbose:
+                LOGGER.info(
+                    f"{i:>3}{f!s:>20}{n_:>3}{m_.np:10.0f}  "
+                    f"{t:<45}{args!s:<30}"
+                )
+
+            save.extend(
+                x % i for x in ([f] if isinstance(f, int) else f)
+                if x != -1
+            )
+
+            layers.append(m_)
+
+            if i == 0:
+                ch = []
+
+            ch.append(c2)
+
+            continue
+
         if m in base_modules:
             c1, c2 = ch[f], args[0]
             if c2 != nc:  # if c2 != nc (e.g., Classify() output)
                 c2 = make_divisible(min(c2, max_channels) * width, 8)
             ### ADDITIONAL MODULES ###
-            args = [c1, c2, *args[1:]]    
+            # LiteTransformerBlock
+            if m is LiteTransformerBlock:
+                c2 = c1
+                args = [c1, *args[1:]]
+
+            else:
+                args = [c1, c2, *args[1:]]   
             if m is MobileNetV3_BLOCK:
                 if isinstance(args[3],int): #might use "None"
                     args[3] = make_divisible(min(args[3], max_channels) * width, 8)
@@ -1820,8 +1869,6 @@ def parse_model(d, ch, verbose=True):
             c1, c2 = ch[f], args[0]
             args = [c1, c2, *args[1:]]
 
-        elif m in {LiteAttentionFusion, RepDepthwiseBlock}:
-            args = [ch[f], *args]
         ##### END ADDITION MODULES #####
         else:
             c2 = ch[f]
