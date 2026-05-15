@@ -7,23 +7,18 @@ class LiteTransformerBlock(nn.Module):
         super().__init__()
 
         self.norm1 = nn.LayerNorm(dim)
-
         self.attn = nn.MultiheadAttention(
             embed_dim=dim,
             num_heads=num_heads,
             batch_first=True
         )
-
         self.norm2 = nn.LayerNorm(dim)
-
         hidden_dim = int(dim * mlp_ratio)
-
         self.mlp = nn.Sequential(
             nn.Linear(dim, hidden_dim),
             nn.GELU(),
             nn.Linear(hidden_dim, dim)
         )
-
     def forward(self, x):
 
         b, c, h, w = x.shape

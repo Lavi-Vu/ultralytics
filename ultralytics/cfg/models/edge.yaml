@@ -50,7 +50,7 @@ head:
   # # P4 → P5
   # - [-1, 1, Conv, [128, 3, 2]]
   # - [[-1, 13], 1, Concat, [1]]
-  # - [-1, 1, Conv, [192, 1, 1]]          # compression
+  # - [-1, 1, Conv, [192, 1, 1]]          # compressionLightweightTransformerBlock
   # - [-1, 1, EdgeGhostBottleneck, [192]]
   # - [-1, 1, LiteAttentionFusion, []]    # 29 (P5)
 
