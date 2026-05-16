@@ -25,7 +25,7 @@ from ultralytics.nn.backbone.EfficentNet import stem, MBConvBlock
 from ultralytics.nn.backbone.edge import EdgeGhostBottleneck, LiteAttentionFusion, RepDepthwiseBlock, RepMixer, LiteAttention
 from ultralytics.nn.backbone.fastvit import FastViTBackbone
 from ultralytics.nn.modules import LiteTransformerBlock
-from ultralytics.nn.backbone.LiteTransformer import LightweightTransformerBlock
+from ultralytics.nn.backbone.LiteTransformer import LightweightTransformerBlock, DPFATransformerBlock
 # ---------- End Custom Backbones Import -----------
 from ultralytics.nn.autobackend import check_class_names
 from ultralytics.nn.modules import (
@@ -1658,7 +1658,8 @@ def parse_model(d, ch, verbose=True):
             HyperComputeModule,
             FastViTBackbone,
             LiteTransformerBlock,
-            LightweightTransformerBlock
+            LightweightTransformerBlock,
+            DPFATransformerBlock
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments

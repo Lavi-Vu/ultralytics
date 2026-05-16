@@ -2,8 +2,11 @@ from ultralytics import YOLO
 import torch
 import cv2
 import os
-
-model = YOLO("/home/lavi/Documents/ultralytics/ultralytics/cfg/models/edge.yaml")
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument('--model', type=str, help='Path to the model file')
+args = parser.parse_args()
+model = YOLO(args.model)
 img_path = "bus.jpg"
 img = cv2.imread(img_path)
 img = cv2.resize(img, (640, 640))
