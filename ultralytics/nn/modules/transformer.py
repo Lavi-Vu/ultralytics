@@ -26,6 +26,8 @@ __all__ = (
     "TransformerBlock",
     "TransformerEncoderLayer",
     "TransformerLayer",
+    "ShapeAttention",
+    "PatternAttention",
 )
 
 
@@ -791,3 +793,61 @@ class DeformableTransformerDecoder(nn.Module):
             refer_bbox = refined_bbox.detach() if self.training else refined_bbox
 
         return torch.stack(dec_bboxes), torch.stack(dec_cls)
+
+
+class ShapeAttention(nn.Module):
+    """Shape Attention Module focusing on horizontal and vertical structure."""
+    def __init__(self, c1, c2):
+        super().__init__()
+        self.conv = nn.Conv2d(c1, c2, 1) if c1 != c2 else nn.Identity()
+        self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
+        self.pool_w = nn.AdaptiveAvgPool2d((1, None))
+        
+        mip = max(8, c2 // 32)
+        self.conv1 = nn.Conv2d(c2, mip, 1)
+        self.bn1 = nn.BatchNorm2d(mip)
+        self.act = nn.SiLU()
+        
+        self.conv_h = nn.Conv2d(mip, c2, 1)
+        self.conv_w = nn.Conv2d(mip, c2, 1)
+        
+    def forward(self, x):
+        x = self.conv(x)
+        b, c, h, w = x.shape
+        x_h = self.pool_h(x)
+        x_w = self.pool_w(x).permute(0, 1, 3, 2)
+        
+        y = torch.cat([x_h, x_w], dim=2)
+        y = self.act(self.bn1(self.conv1(y)))
+        
+        y_h, y_w = torch.split(y, [h, w], dim=2)
+        y_w = y_w.permute(0, 1, 3, 2)
+        
+        a_h = torch.sigmoid(self.conv_h(y_h))
+        a_w = torch.sigmoid(self.conv_w(y_w))
+        
+        return x * a_h * a_w
+
+
+class PatternAttention(nn.Module):
+    """Pattern Attention Module using a Doughnut-like Kernel."""
+    def __init__(self, c1, c2):
+        super().__init__()
+        self.conv = nn.Conv2d(c1, c2, 1) if c1 != c2 else nn.Identity()
+        # 3x3 conv with dilation 2 acts as a sparse pattern
+        self.pattern_conv = nn.Conv2d(c2, c2, kernel_size=3, padding=2, dilation=2, groups=c2)
+        self.bn = nn.BatchNorm2d(c2)
+        self.act = nn.SiLU()
+        self.spatial_attn = nn.Conv2d(2, 1, kernel_size=7, padding=3)
+        
+    def forward(self, x):
+        x = self.conv(x)
+        pattern_feat = self.act(self.bn(self.pattern_conv(x)))
+        
+        avg_out = torch.mean(pattern_feat, dim=1, keepdim=True)
+        max_out, _ = torch.max(pattern_feat, dim=1, keepdim=True)
+        attn = torch.cat([avg_out, max_out], dim=1)
+        attn = torch.sigmoid(self.spatial_attn(attn))
+        
+        return x * attn
+

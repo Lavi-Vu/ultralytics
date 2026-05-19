@@ -92,6 +92,7 @@ from ultralytics.nn.modules import (
     MobileNetV3_BLOCK,
     mn_conv,
     HP_CSE, CSE_CAMv1, DepthwiseSeparableConvBN, DepthwiseSeparableDilatedConvBN,Shortcut,
+    ShapeAttention, PatternAttention,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, WINDOWS, YAML, colorstr, emojis
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -1659,7 +1660,9 @@ def parse_model(d, ch, verbose=True):
             FastViTBackbone,
             LiteTransformerBlock,
             LightweightTransformerBlock,
-            DPFATransformerBlock
+            DPFATransformerBlock,
+            ShapeAttention,
+            PatternAttention
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments

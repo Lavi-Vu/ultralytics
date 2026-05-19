@@ -108,6 +108,8 @@ from .transformer import (
     TransformerBlock,
     TransformerEncoderLayer,
     TransformerLayer,
+    ShapeAttention,
+    PatternAttention,
 )
 from .lite_transformer import LiteTransformerBlock
 
@@ -187,6 +189,8 @@ __all__ = (
     "TransformerBlock",
     "TransformerEncoderLayer",
     "TransformerLayer",
+    "ShapeAttention",
+    "PatternAttention",
     "WorldDetect",
     "YOLOEDetect",
     "YOLOESegment",
