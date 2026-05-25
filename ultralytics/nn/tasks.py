@@ -55,6 +55,9 @@ from ultralytics.nn.modules import (
     ImagePoolingAttn,
     Index,
     LRPCHead,
+    LinearAttention,
+    LinearAttentionBlock,
+    PerformerAttention,
     Pose,
     Pose26,
     RepC3,
@@ -1708,6 +1711,9 @@ def parse_model(d, ch, verbose=True):
             SCDown,
             C2fCIB,
             A2C2f,
+            LinearAttention,
+            LinearAttentionBlock,
+            PerformerAttention,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1750,7 +1756,11 @@ def parse_model(d, ch, verbose=True):
                 args[1] = make_divisible(min(args[1], max_channels // 2) * width, 8)
                 args[2] = int(max(round(min(args[2], max_channels // 2 // 32)) * width, 1) if args[2] > 1 else args[2])
 
-            args = [c1, c2, *args[1:]]
+            if m in frozenset({LinearAttention, LinearAttentionBlock, PerformerAttention}):
+                args = [c1, *args[1:]]  # dim matches input channels (same-dim in/out)
+                c2 = c1  # output channels same as input
+            else:
+                args = [c1, c2, *args[1:]]
             if m in repeat_modules:
                 args.insert(2, n)  # number of repeats
                 n = 1

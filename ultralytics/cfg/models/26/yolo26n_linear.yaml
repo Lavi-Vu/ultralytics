@@ -1,0 +1,52 @@
+# Ultralytics YOLO26n with efficient Linear Attention
+# Replaces PSA-heavy modules (C3k2 True, C2PSA) with cheap LinearAttentionBlock
+# Channel-reducing Convs added in head to keep LAB dims small
+
+# Parameters
+nc: 80
+end2end: True
+reg_max: 1
+scales:
+  n: [0.50, 0.25, 1024]
+
+# Backbone — replaces C3k2[True] and C2PSA with cheap LinearAttentionBlock
+backbone:
+  - [-1, 1, Conv, [64, 3, 2]]        # 0-P1/2
+  - [-1, 1, Conv, [128, 3, 2]]       # 1-P2/4
+  - [-1, 2, C3k2, [256, False, 0.25]]
+  - [-1, 1, Conv, [256, 3, 2]]       # 3-P3/8
+  - [-1, 2, C3k2, [512, False, 0.25]]
+  - [-1, 1, Conv, [512, 3, 2]]       # 5-P4/16
+  - [-1, 2, LinearAttentionBlock, [512, 2, 0.25, 0.25]]  # 6 — cheap LAB
+  - [-1, 1, Conv, [1024, 3, 2]]      # 7-P5/32
+  - [-1, 2, LinearAttentionBlock, [1024, 2, 0.25, 0.25]]  # 8
+  - [-1, 1, SPPF, [1024, 5, 3, True]]  # 9
+  - [-1, 2, LinearAttentionBlock, [1024, 2, 0.25, 0.25]]  # 10
+
+# Head — channel-reducing Convs keep LAB dimensions efficient
+head:
+  # FPN top-down: P5 → P4
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 6], 1, Concat, [1]]        # 384ch
+  - [-1, 1, Conv, [512, 1, 1]]       # 384→128ch reduction
+  - [-1, 2, LinearAttentionBlock, [512, 2, 0.25, 0.25]]  # 128ch LAB
+
+  # FPN top-down: P4 → P3
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 4], 1, Concat, [1]]        # 256ch
+  - [-1, 1, Conv, [256, 1, 1]]       # 256→64ch reduction
+  - [-1, 2, LinearAttentionBlock, [256, 2, 0.25, 0.25]]  # 18 — 64ch LAB (P3)
+
+  # PAN bottom-up: P3 → P4
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [[-1, 14], 1, Concat, [1]]       # 192ch
+  - [-1, 1, Conv, [256, 1, 1]]       # 192→64ch reduction
+  - [-1, 2, LinearAttentionBlock, [256, 2, 0.25, 0.25]]  # 22 — 64ch LAB (P4)
+
+  # PAN bottom-up: P4 → P5
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [[-1, 10], 1, Concat, [1]]       # 320ch
+  - [-1, 1, Conv, [256, 1, 1]]       # 320→64ch reduction
+  - [-1, 1, LinearAttentionBlock, [256, 2, 0.25, 0.5]]  # 26 — 64ch LAB (P5), higher mlp
+
+  - [[18, 22, 26], 1, Detect, [nc]] # Detect(P3, P4, P5)

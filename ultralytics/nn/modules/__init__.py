@@ -60,6 +60,11 @@ from .block import (
     SCDown,
     TorchVision,
 )
+from .linear_attention import (
+    LinearAttention,
+    PerformerAttention,
+    LinearAttentionBlock,
+)
 from .conv import (
     CBAM,
     ChannelAttention,
@@ -189,4 +194,7 @@ __all__ = (
     "YOLOESegment",
     "YOLOESegment26",
     "v10Detect",
+    "LinearAttention",
+    "PerformerAttention",
+    "LinearAttentionBlock",
 )
