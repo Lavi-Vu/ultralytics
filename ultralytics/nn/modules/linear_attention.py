@@ -28,7 +28,7 @@ class LinearAttention(nn.Module):
     """
 
     def __init__(self, dim: int, num_heads: int = 8, attn_ratio: float = 0.5,
-                 feature_map: str = 'elu', eps: float = 1e-6):
+                 feature_map: str = 'relu', eps: float = 1e-6):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
@@ -44,9 +44,9 @@ class LinearAttention(nn.Module):
         self.out_proj = Conv(self.value_dim * num_heads, dim, 1, act=False)
 
     def _feature_map(self, x: torch.Tensor) -> torch.Tensor:
-        """Apply feature map to approximate softmax kernel."""
+        """Apply feature map to approximate softmax kernel. Must be positive-definite."""
         if self.feature_map == 'relu':
-            return F.relu(x)
+            return F.relu(x) + 1  # +1 guarantees positive (never zero)
         elif self.feature_map == 'elu':
             return F.elu(x) + 1
         else:
@@ -70,9 +70,10 @@ class LinearAttention(nn.Module):
         k = self.k_proj(x).view(B, self.num_heads, self.key_dim, N)  # (B, heads, key_dim, N)
         v = self.v_proj(x).view(B, self.num_heads, self.value_dim, N)  # (B, heads, value_dim, N)
 
-        # Apply feature maps
-        q = self._feature_map(q)  # (B, heads, key_dim, N)
-        k = self._feature_map(k)  # (B, heads, key_dim, N)
+        # Apply feature maps with attention scaling for numerical stability
+        scale = self.key_dim ** -0.5  # 1/sqrt(key_dim)
+        q = self._feature_map(q * scale)  # (B, heads, key_dim, N)
+        k = self._feature_map(k * scale)  # (B, heads, key_dim, N)
         # v stays as is
 
         # Compute linear attention with normalization
@@ -83,10 +84,7 @@ class LinearAttention(nn.Module):
         out = torch.einsum('bhkn,bhkvm->bhvm', q, kv)
 
         # Normalization: 1 / (Q * K^T * 1) where we sum over key_dim
-        # For each position, we want sum over key_dim of (q * k)
-        # q: (B, heads, key_dim, N), k: (B, heads, key_dim, N)
-        # Result: (B, heads, N)
-        z = 1 / (torch.einsum('bhkn,bhkn->bhn', q, k) + self.eps)  # (B, heads, N)
+        z = 1 / torch.einsum('bhkn,bhkn->bhn', q, k).clamp(min=self.eps)  # (B, heads, N)
 
         out = out * z.unsqueeze(2)  # (B, heads, value_dim, N)
 
@@ -214,7 +212,7 @@ class LinearAttentionBlock(nn.Module):
     """
 
     def __init__(self, dim: int, num_heads: int = 8, attn_ratio: float = 0.5,
-                 mlp_ratio: float = 0.25, feature_map: str = 'elu', act=None):
+                 mlp_ratio: float = 0.25, feature_map: str = 'relu', act=None):
         super().__init__()
         self.attn = LinearAttention(dim, num_heads, attn_ratio, feature_map)
         self.mlp_dim = int(dim * mlp_ratio)
