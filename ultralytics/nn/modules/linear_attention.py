@@ -74,18 +74,22 @@ class LinearAttention(nn.Module):
         scale = self.key_dim ** -0.5  # 1/sqrt(key_dim)
         q = self._feature_map(q * scale)  # (B, heads, key_dim, N)
         k = self._feature_map(k * scale)  # (B, heads, key_dim, N)
-        # v stays as is
 
-        # Compute linear attention with normalization
-        # KV^T: (B, heads, key_dim, value_dim)
-        kv = torch.einsum('bhkn,bhvm->bhkvm', k, v)
+        # Normalize value by spatial dimension to keep einsum values in FP16 range.
+        inv_N = 1.0 / N
 
-        # Q(KV): (B, heads, key_dim, N) @ (B, heads, key_dim, value_dim) -> (B, heads, value_dim, N)
-        out = torch.einsum('bhkn,bhkvm->bhvm', q, kv)
+        # Compute linear attention: KV = Σ_k k_n · v_n (accumulate over source positions)
+        # kv: (B, H, K, V) — collapses spatial dimension, O(1) instead of O(N)
+        kv = torch.einsum('bhkn,bhvn->bhkv', k, v * inv_N)
 
-        # Normalization: 1 / (Q * K^T * 1) where we sum over key_dim
-        z = 1 / torch.einsum('bhkn,bhkn->bhn', q, k).clamp(min=self.eps)  # (B, heads, N)
+        # Per-query-position output: out_n = Q_n · KV
+        # Sums over key_dim K only — does NOT sum over query positions
+        out = torch.einsum('bhkn,bhkv->bhvn', q, kv)  # (B, heads, value_dim, N)
 
+        # Normalization: z_n = 1 / (Q_n · K_avg) where K_avg = mean(K)
+        k_avg = k.mean(dim=-1)  # (B, heads, key_dim) — average over source positions
+        qk = torch.einsum('bhkn,bhk->bhn', q, k_avg).clamp(min=self.eps)  # (B, heads, N)
+        z = 1.0 / qk  # (B, heads, N)
         out = out * z.unsqueeze(2)  # (B, heads, value_dim, N)
 
         # Reshape and project back
