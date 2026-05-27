@@ -73,9 +73,8 @@ from ultralytics.nn.modules import (
     YOLOESegment,
     YOLOESegment26,
     v10Detect,
-    DynamicTransformerBlock,
-    RLPruningController,
 )
+from ultralytics.nn.modules.transformer_rl import DynamicTransformerBlock,RLPruningController
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, SETTINGS, WINDOWS, YAML, colorstr, emojis
 from ultralytics.utils.checks import REMOTE_FILE_PREFIXES, check_file, check_requirements, check_suffix, check_yaml
 from ultralytics.utils.loss import (
@@ -1710,6 +1709,7 @@ def parse_model(d, ch, verbose=True):
             SCDown,
             C2fCIB,
             A2C2f,
+            DynamicTransformerBlock,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
