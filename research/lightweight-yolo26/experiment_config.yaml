@@ -1,0 +1,62 @@
+# Experiment configuration for lightweight YOLO26 research
+# This file specifies all 7 experimental runs and their hyperparameters.
+
+experiments:
+
+  # === Track 0: Baseline ===
+  - name: E0_baseline
+    model: baseline
+    description: "YOLO26-N exact reproduction — control condition"
+
+  # === Track 1: YOLO26-N Direct Modification ===
+  - name: E1_reparam
+    model: reparam
+    description: "Reparam bottleneck in backbone C3k2 (H1)"
+    expected_gflops: 6.1
+    expected_map: 37.3
+
+  - name: E2_gate
+    model: gate
+    description: "Channel gating in neck C3k2 (H2)"
+    gate_lambda: 1.0e-4
+    expected_gflops: 5.2
+    expected_map: 36.8
+
+  - name: E3_combined
+    model: combined
+    description: "Reparam backbone + gated neck (H3)"
+    gate_lambda: 1.0e-4
+    expected_gflops: 5.5
+    expected_map: 37.2
+
+  # === Track 2: Neck-Only Variant ===
+  - name: E4_neck_ghost
+    model: neck-ghost
+    description: "GhostConv in all neck C3k2 (H4)"
+    expected_gflops: 4.8
+    expected_map: 36.7
+
+  - name: E5_neck_light
+    model: neck-light
+    description: "FPN-only neck, PAN removed (H5)"
+    expected_gflops: 4.5
+    expected_map: 36.6
+
+  - name: E6_neck_wide
+    model: neck-wide
+    description: "Neck width 0.5 + GhostConv (H6)"
+    expected_gflops: 3.8
+    expected_map: 36.5
+
+# Shared hyperparameters
+defaults:
+  batch: 256
+  epochs: 300
+  lr: 0.001
+  weight_decay: 0.05
+  warmup_epochs: 3
+  img_size: 640
+  grad_accum: 1
+  optimizer: "AdamW"
+  scheduler: "cosine"
+  seed: 42

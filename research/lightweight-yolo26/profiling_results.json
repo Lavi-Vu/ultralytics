@@ -1,0 +1,58 @@
+[
+  {
+    "model": "baseline",
+    "params_m": 2.4881,
+    "trainable_m": 2.4881,
+    "gflops": 3.03,
+    "fps": 8.4,
+    "latency_ms": 119.31
+  },
+  {
+    "model": "reparam",
+    "params_m": 2.6877,
+    "trainable_m": 2.6877,
+    "gflops": 3.23,
+    "fps": 7.9,
+    "latency_ms": 126.55
+  },
+  {
+    "model": "gate",
+    "params_m": 2.4893,
+    "trainable_m": 2.4893,
+    "gflops": 3.03,
+    "fps": 7.8,
+    "latency_ms": 128.14
+  },
+  {
+    "model": "combined",
+    "params_m": 2.6889,
+    "trainable_m": 2.6889,
+    "gflops": 3.23,
+    "fps": 7.6,
+    "latency_ms": 131.97
+  },
+  {
+    "model": "neck-ghost",
+    "params_m": 2.4429,
+    "trainable_m": 2.4429,
+    "gflops": 2.98,
+    "fps": 8.0,
+    "latency_ms": 124.82
+  },
+  {
+    "model": "neck-light",
+    "params_m": 1.821,
+    "trainable_m": 1.821,
+    "gflops": 2.58,
+    "fps": 9.3,
+    "latency_ms": 107.25
+  },
+  {
+    "model": "neck-wide",
+    "params_m": 1.7953,
+    "trainable_m": 1.7953,
+    "gflops": 2.26,
+    "fps": 8.9,
+    "latency_ms": 112.02
+  }
+]

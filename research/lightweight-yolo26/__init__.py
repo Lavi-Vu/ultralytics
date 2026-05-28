@@ -1,0 +1,1 @@
+# Lightweight YOLO26 research project.
