@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Lightweight YOLO26 Research — Launcher Script
-# Runs profiling first, then full training for all 7 experiments.
-# Configure paths below before running.
+# Lightweight YOLO26 Research — Launcher Script (Ultralytics Pipeline)
+# Trains all 7 experiments using train_ultralytics.py + Ultralytics dataset config.
 #
 # Usage:
 #   bash train.sh               # Run all experiments sequentially
@@ -10,41 +9,45 @@
 #   bash train.sh E1,E2,E3      # Run specific experiments
 #
 # Assumptions:
-#   - COCO 2017 data at $COCO_DIR
-#   - Conda/Python env with torch, thop, pycocotools installed
-#   - GPU with ≥24 GB VRAM (for batch 256); reduce to 128 if OOM
+#   - COCO 2017 data at $COCO_DIR (default set in cfg/coco.yaml)
+#   - Conda/Python env with torch, ultralytics installed
+#   - GPU with ≥24 GB VRAM (for batch 32); reduce if OOM
 
 set -euo pipefail
 
 # ============================================================
 # CONFIG — EDIT THESE PATHS
 # ============================================================
-COCO_DIR="${COCO_DIR:-/media/ntnuvip/HardDisk/user01//datasets/coco}"        # Path to COCO 2017 (images + annotations)
+COCO_DIR="${COCO_DIR:-/media/ntnuvip/HardDisk/user01/datasets/coco}"        # Path to COCO 2017
 OUTPUT_DIR="${OUTPUT_DIR:-./runs}"             # Output directory for checkpoints + logs
-CONDA_ENV="${CONDA_ENV:-py311}"   # Conda environment name
-NUM_GPUS="${NUM_GPUS:-1}"                      # Number of GPUs for DDP
+CONDA_ENV="${CONDA_ENV:-py311}"                # Conda environment name
+NUM_GPUS="${NUM_GPUS:-1}"                      # Number of GPUs for DDP (≥2 uses torchrun)
 
 # ============================================================
-# RESOLVE EXPERIMENTS
+# EXPERIMENT → YAML MAPPING
 # ============================================================
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+CFG_DIR="cfg"
+
 EXPERIMENTS=(
-    "E0_baseline:baseline"
-    "E1_reparam:reparam"
-    "E2_gate:gate"
-    "E3_combined:combined"
-    "E4_neck_ghost:neck-ghost"
-    "E5_neck_light:neck-light"
-    "E6_neck_wide:neck-wide"
+    "E0_baseline:baseline:yolo26n_baseline"
+    "E1_reparam:reparam:yolo26n_reparam"
+    "E2_gate:gate:yolo26n_gate"
+    "E3_combined:combined:yolo26n_combined"
+    "E4_neck_ghost:neck-ghost:yolo26n_neck_ghost"
+    "E5_neck_light:neck-light:yolo26n_neck_light"
+    "E6_neck_wide:neck-wide:yolo26n_neck_wide"
 )
 
 declare -A E_MAP
 for e in "${EXPERIMENTS[@]}"; do
     key="${e%%:*}"
-    val="${e##*:}"
-    E_MAP["$key"]="$val"
+    rest="${e#*:}"
+    val="${rest%%:*}"
+    yaml_name="${rest##*:}"
+    E_MAP["$key"]="$val|$yaml_name"
 done
 
 # ============================================================
@@ -93,44 +96,54 @@ echo "============================================"
 echo ""
 
 for exp_name in "${SELECTED[@]}"; do
-    model_name="${E_MAP[$exp_name]}"
+    entry="${E_MAP[$exp_name]}"
+    model_name="${entry%%|*}"
+    yaml_name="${entry##*|}"
+    yaml_path="$CFG_DIR/${yaml_name}.yaml"
 
     echo ""
     echo "============================================"
-    echo "  Running: $exp_name ($model_name)"
+    echo "  Running: $exp_name ($model_name) — $yaml_path"
     echo "============================================"
     echo ""
 
-    # Use torchrun for multi-GPU training
+    TRAIN_CMD="python train_ultralytics.py \
+        --cfg $yaml_path \
+        --data $CFG_DIR/coco.yaml \
+        --batch 32 \
+        --epochs 245 \
+        --imgsz 640 \
+        --lr 0.001 \
+        --device 0 \
+        --project $OUTPUT_DIR \
+        --name $model_name"
+
+    echo "  Command: $TRAIN_CMD"
+    echo ""
+
     if [[ $NUM_GPUS -gt 1 ]]; then
         torchrun --nproc_per_node=$NUM_GPUS \
-            train.py \
-            --model "$model_name" \
+            train_ultralytics.py \
+            --cfg "$yaml_path" \
+            --data "$CFG_DIR/coco.yaml" \
             --batch $((32 / NUM_GPUS)) \
             --epochs 245 \
-            --data-dir "$COCO_DIR" \
-            --output-dir "$OUTPUT_DIR" \
-            --img-size 640
+            --imgsz 640 \
+            --lr 0.001 \
+            --device "$(seq -s, 0 $((NUM_GPUS - 1)))" \
+            --project "$OUTPUT_DIR" \
+            --name "$model_name"
     else
-        python train.py \
-            --model "$model_name" \
+        python train_ultralytics.py \
+            --cfg "$yaml_path" \
+            --data "$CFG_DIR/coco.yaml" \
             --batch 32 \
             --epochs 245 \
-            --data-dir "$COCO_DIR" \
-            --output-dir "$OUTPUT_DIR" \
-            --img-size 640
-    fi
-
-    # Validate best checkpoint
-    best_ckpt="$OUTPUT_DIR/$model_name/best.pt"
-    if [[ -f "$best_ckpt" ]]; then
-        echo ""
-        echo "Validating $exp_name best checkpoint..."
-        python val.py \
-            --model "$model_name" \
-            --weights "$best_ckpt" \
-            --data-dir "$COCO_DIR" \
-            --img-size 640
+            --imgsz 640 \
+            --lr 0.001 \
+            --device 0 \
+            --project "$OUTPUT_DIR" \
+            --name "$model_name"
     fi
 
     echo ""
@@ -145,20 +158,30 @@ echo "  ALL EXPERIMENTS COMPLETE"
 echo "============================================"
 echo ""
 
-# Generate summary
+# Generate summary from Ultralytics results.csv files
 python -c "
-import json, glob
+import glob, csv, os
 results = []
-for model_dir in sorted(glob.glob('$OUTPUT_DIR/*/best.pt')):
-    import torch
-    ckpt = torch.load(model_dir, map_location='cpu')
-    results.append({
-        'model': model_dir.split('/')[-2],
-        'mAP': ckpt.get('mAP', 0.0),
-        'epoch': ckpt.get('epoch', -1),
-    })
-    print(f\"{results[-1]['model']:20s} | mAP: {results[-1]['mAP']:.3f} @ epoch {results[-1]['epoch']}\")
+for csv_file in sorted(glob.glob('$OUTPUT_DIR/*/results.csv')):
+    model_dir = os.path.dirname(csv_file)
+    model_name = os.path.basename(model_dir)
+    with open(csv_file) as f:
+        reader = csv.DictReader(f)
+        last_row = None
+        for row in reader:
+            last_row = row
+    if last_row:
+        results.append({
+            'model': model_name,
+            'mAP50-95': float(last_row.get('metrics/mAP50-95(B)', 0)),
+            'mAP50': float(last_row.get('metrics/mAP50(B)', 0)),
+            'precision': float(last_row.get('metrics/precision(B)', 0)),
+            'recall': float(last_row.get('metrics/recall(B)', 0)),
+            'epochs': int(last_row.get('epoch', 0)),
+        })
+        print(f\"{model_name:25s} | mAP50-95: {results[-1]['mAP50-95']:.3f} | mAP50: {results[-1]['mAP50']:.3f} | epochs: {results[-1]['epochs']}\")
+import json
 with open('$OUTPUT_DIR/experiment_summary.json', 'w') as f:
     json.dump(results, f, indent=2)
-print(f'\nSummary saved to $OUTPUT_DIR/experiment_summary.json')
+print(f'\nSummary saved to \$OUTPUT_DIR/experiment_summary.json')
 "
