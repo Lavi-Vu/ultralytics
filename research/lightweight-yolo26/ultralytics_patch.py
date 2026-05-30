@@ -15,10 +15,11 @@ from pathlib import Path
 
 import torch.nn as nn
 
-# Ensure research dir is on path for our custom module imports
+# Ensure research dir is on path (at END, not front) for custom module imports
+# Using append prevents profile.py in the research dir from shadowing stdlib profile.
 _research_dir = str(Path(__file__).resolve().parent)
 if _research_dir not in sys.path:
-    sys.path.insert(0, _research_dir)
+    sys.path.append(_research_dir)
 
 import ultralytics.nn.tasks as tasks
 from ultralytics.nn.modules.block import C2f, C3k2

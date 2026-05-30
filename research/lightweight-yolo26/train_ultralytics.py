@@ -17,7 +17,7 @@ from pathlib import Path
 # Apply monkey-patch BEFORE any YOLO import
 _research_dir = str(Path(__file__).resolve().parent)
 if _research_dir not in sys.path:
-    sys.path.insert(0, _research_dir)
+    sys.path.append(_research_dir)  # append, not insert(0) — avoids shadowing stdlib
 
 import ultralytics_patch  # noqa: F401 — auto-registers custom modules in parse_model
 
