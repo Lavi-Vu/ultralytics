@@ -2,9 +2,8 @@
 # Points to custom COCO path on training server.
 
 path: /media/ntnuvip/HardDisk/user01/datasets/coco  # dataset root dir
-train: train2017.txt
-val: val2017.txt
-test: test-dev2017.txt
+train: train2017  # image directory
+val: val2017      # image directory
 
 # Classes
 names:

@@ -23,6 +23,9 @@ OUTPUT_DIR="${OUTPUT_DIR:-./runs}"             # Output directory for checkpoint
 CONDA_ENV="${CONDA_ENV:-py311}"                # Conda environment name
 NUM_GPUS="${NUM_GPUS:-1}"                      # Number of GPUs for DDP (≥2 uses torchrun)
 
+# Uncomment to get exact CUDA error line locations
+# DEBUG="CUDA_LAUNCH_BLOCKING=1"
+
 # ============================================================
 # EXPERIMENT → YAML MAPPING
 # ============================================================
@@ -107,7 +110,7 @@ for exp_name in "${SELECTED[@]}"; do
     echo "============================================"
     echo ""
 
-    TRAIN_CMD="python train_ultralytics.py \
+    BASE_CMD="train_ultralytics.py \
         --cfg $yaml_path \
         --data $CFG_DIR/coco.yaml \
         --batch 32 \
@@ -118,8 +121,11 @@ for exp_name in "${SELECTED[@]}"; do
         --project $OUTPUT_DIR \
         --name $model_name"
 
-    echo "  Command: $TRAIN_CMD"
+    echo "  Command: ${DEBUG:-} python $BASE_CMD"
     echo ""
+
+    # Build actual command
+    CMD="${DEBUG:+${DEBUG} }python $BASE_CMD"
 
     if [[ $NUM_GPUS -gt 1 ]]; then
         torchrun --nproc_per_node=$NUM_GPUS \
@@ -134,16 +140,7 @@ for exp_name in "${SELECTED[@]}"; do
             --project "$OUTPUT_DIR" \
             --name "$model_name"
     else
-        python train_ultralytics.py \
-            --cfg "$yaml_path" \
-            --data "$CFG_DIR/coco.yaml" \
-            --batch 32 \
-            --epochs 245 \
-            --imgsz 640 \
-            --lr 0.001 \
-            --device 0 \
-            --project "$OUTPUT_DIR" \
-            --name "$model_name"
+        eval "$CMD"
     fi
 
     echo ""
