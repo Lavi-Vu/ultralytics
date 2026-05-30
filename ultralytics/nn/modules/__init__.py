@@ -105,6 +105,7 @@ from .transformer import (
     TransformerBlock,
     TransformerEncoderLayer,
     TransformerLayer,
+    ShapeAttention,
 )
 
 __all__ = (
@@ -189,4 +190,5 @@ __all__ = (
     "YOLOESegment",
     "YOLOESegment26",
     "v10Detect",
+    "ShapeAttention"
 )

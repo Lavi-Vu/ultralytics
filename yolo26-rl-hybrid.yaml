@@ -3,8 +3,10 @@
 
 # Parameters
 nc: 80  # number of classes
+end-to-end: True  # train with end-to-end RL-Transformer
+reg_max: 1
 scales: # model scale coefficients
-  n: [0.33, 0.25, 1024] # [depth, width, max_channels]
+  n: [0.5, 0.25, 1024] # [depth, width, max_channels]
 
 # -------------------------------------------------------------------------------------------------
 # Backbone
@@ -43,5 +45,8 @@ head:
   - [[-1, 10], 1, Concat, [1]] # 21
   - [-1, 1, C3k2, [1024, True, 0.5, True]] # 22 (P5/32-large)
 
+  # - [16, 1, ShapeAttention, [256]]  # 22
+  # - [19, 1, ShapeAttention, [512]]  # 23
+  # - [22, 1, ShapeAttention, [1024]] # 24
 
   - [[16, 19, 22], 1, Detect, [nc]] # 23 (P3, P4, P5)

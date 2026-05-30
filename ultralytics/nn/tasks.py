@@ -73,6 +73,7 @@ from ultralytics.nn.modules import (
     YOLOESegment,
     YOLOESegment26,
     v10Detect,
+    ShapeAttention
 )
 from ultralytics.nn.modules.transformer_rl import DynamicTransformerBlock,RLPruningController
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, SETTINGS, WINDOWS, YAML, colorstr, emojis
@@ -1710,6 +1711,7 @@ def parse_model(d, ch, verbose=True):
             C2fCIB,
             A2C2f,
             DynamicTransformerBlock,
+            ShapeAttention
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
