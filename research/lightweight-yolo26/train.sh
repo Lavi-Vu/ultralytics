@@ -59,7 +59,7 @@ echo "  STEP 1: Profiling all models"
 echo "============================================"
 echo ""
 
-python profile.py --device cuda --img-size 640
+python profile_models.py --device cuda --img-size 640
 
 echo ""
 echo "Profiling complete. Results in profiling_results.json"
