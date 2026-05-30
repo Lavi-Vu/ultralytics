@@ -19,10 +19,10 @@ set -euo pipefail
 # ============================================================
 # CONFIG — EDIT THESE PATHS
 # ============================================================
-COCO_DIR="${COCO_DIR:-/datasets/coco}"        # Path to COCO 2017 (images + annotations)
+COCO_DIR="${COCO_DIR:-/media/ntnuvip/HardDisk/user01//datasets/coco}"        # Path to COCO 2017 (images + annotations)
 OUTPUT_DIR="${OUTPUT_DIR:-./runs}"             # Output directory for checkpoints + logs
-CONDA_ENV="${CONDA_ENV:-lightweight-yolo26}"   # Conda environment name
-NUM_GPUS="${NUM_GPUS:-4}"                      # Number of GPUs for DDP
+CONDA_ENV="${CONDA_ENV:-py311}"   # Conda environment name
+NUM_GPUS="${NUM_GPUS:-1}"                      # Number of GPUs for DDP
 
 # ============================================================
 # RESOLVE EXPERIMENTS
@@ -106,16 +106,16 @@ for exp_name in "${SELECTED[@]}"; do
         torchrun --nproc_per_node=$NUM_GPUS \
             train.py \
             --model "$model_name" \
-            --batch $((256 / NUM_GPUS)) \
-            --epochs 300 \
+            --batch $((32 / NUM_GPUS)) \
+            --epochs 245 \
             --data-dir "$COCO_DIR" \
             --output-dir "$OUTPUT_DIR" \
             --img-size 640
     else
         python train.py \
             --model "$model_name" \
-            --batch 256 \
-            --epochs 300 \
+            --batch 32 \
+            --epochs 245 \
             --data-dir "$COCO_DIR" \
             --output-dir "$OUTPUT_DIR" \
             --img-size 640
