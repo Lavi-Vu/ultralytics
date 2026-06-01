@@ -1,58 +1,65 @@
 [
   {
     "model": "baseline",
-    "params_m": 2.4881,
-    "trainable_m": 2.4881,
-    "gflops": 3.03,
-    "fps": 8.4,
-    "latency_ms": 119.31
+    "yaml": "yolo26n_baseline",
+    "params_m": 2.5723,
+    "trainable_m": 2.5723,
+    "gflops": 3.06,
+    "fps": 62.8,
+    "latency_ms": 15.94
   },
   {
     "model": "reparam",
-    "params_m": 2.6877,
-    "trainable_m": 2.6877,
-    "gflops": 3.23,
-    "fps": 7.9,
-    "latency_ms": 126.55
+    "yaml": "yolo26n_reparam",
+    "params_m": 2.7719,
+    "trainable_m": 2.7719,
+    "gflops": 3.33,
+    "fps": 63.0,
+    "latency_ms": 15.87
   },
   {
     "model": "gate",
-    "params_m": 2.4893,
-    "trainable_m": 2.4893,
-    "gflops": 3.03,
-    "fps": 7.8,
-    "latency_ms": 128.14
+    "yaml": "yolo26n_gate",
+    "params_m": 2.5735,
+    "trainable_m": 2.5735,
+    "gflops": 3.06,
+    "fps": 59.6,
+    "latency_ms": 16.78
   },
   {
     "model": "combined",
-    "params_m": 2.6889,
-    "trainable_m": 2.6889,
-    "gflops": 3.23,
-    "fps": 7.6,
-    "latency_ms": 131.97
+    "yaml": "yolo26n_combined",
+    "params_m": 3.6386,
+    "trainable_m": 3.6386,
+    "gflops": 5.08,
+    "fps": 64.2,
+    "latency_ms": 15.58
   },
   {
-    "model": "neck-ghost",
+    "model": "neck_ghost",
+    "yaml": "yolo26n_neck_ghost",
     "params_m": 2.4429,
     "trainable_m": 2.4429,
     "gflops": 2.98,
-    "fps": 8.0,
-    "latency_ms": 124.82
+    "fps": 69.2,
+    "latency_ms": 14.46
   },
   {
-    "model": "neck-light",
+    "model": "neck_light",
+    "yaml": "yolo26n_neck_light",
     "params_m": 1.821,
     "trainable_m": 1.821,
     "gflops": 2.58,
-    "fps": 9.3,
-    "latency_ms": 107.25
+    "fps": 79.3,
+    "latency_ms": 12.62
   },
   {
-    "model": "neck-wide",
+    "model": "neck_wide",
+    "yaml": "yolo26n_neck_wide",
     "params_m": 1.7953,
     "trainable_m": 1.7953,
     "gflops": 2.26,
-    "fps": 8.9,
-    "latency_ms": 112.02
+    "fps": 68.9,
+    "latency_ms": 14.51
   }
 ]

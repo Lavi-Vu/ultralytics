@@ -11,6 +11,7 @@ parser.add_argument("--export", action="store_true", help="Export the model to O
 parser.add_argument("--opset", type=int, default=11, help="ONNX opset version")
 args = parser.parse_args()
 model = YOLO(args.model)
+model.model.eval()
 model.info()
 if args.export:
     model.export(format="onnx", opset=args.opset) # Export the model to ONNX format

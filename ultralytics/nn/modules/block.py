@@ -2071,3 +2071,262 @@ class RealNVP(nn.Module):
             self.float()
         z, log_det = self.backward_p(x)
         return self.prior.log_prob(z) + log_det
+###################################################################
+class ReparamConvBlock(nn.Module):
+    """Single reparameterizable convolution block — trains as multi-branch, infers as single 3x3 Conv."""
+
+    def __init__(self, c1, c2, k=3, s=1, g=1):
+        super().__init__()
+        assert k == 3 and s == 1, "ReparamConvBlock only supports k=3, s=1 (for Bottleneck use)"
+        self.c1 = c1
+        self.c2 = c2
+        self.g = g
+
+        # Branch 1: 3x3 Conv
+        self.conv_3x3 = nn.Sequential(
+            nn.Conv2d(c1, c2, 3, s, 1, groups=g, bias=False),
+            nn.BatchNorm2d(c2),
+        )
+        # Branch 2: 1x1 Conv (padded to 3x3 at fusion)
+        self.conv_1x1 = nn.Sequential(
+            nn.Conv2d(c1, c2, 1, s, 0, groups=g, bias=False),
+            nn.BatchNorm2d(c2),
+        )
+        # Branch 3: Identity (only if c1 == c2 and s == 1)
+        self.id = nn.BatchNorm2d(c2) if c1 == c2 and s == 1 else None
+
+    def forward(self, x):
+        out = self.conv_3x3(x) + self.conv_1x1(x)
+        if self.id is not None:
+            out = out + self.id(x)
+        return out
+
+    @torch.no_grad()
+    def fuse_convs(self):
+        """Fuse all branches into a single 3x3 Conv for inference."""
+        if not hasattr(self, "conv_3x3"):
+            return  # already fused
+        kernel_3x3, bias_3x3 = self._fuse_bn(self.conv_3x3[0], self.conv_3x3[1])
+        kernel_1x1, bias_1x1 = self._fuse_bn(self.conv_1x1[0], self.conv_1x1[1])
+        kernel_1x1 = self._pad_1x1_to_3x3(kernel_1x1)
+
+        kernel_id, bias_id = 0, 0
+        if self.id is not None:
+            kernel_id, bias_id = self._fuse_bn_identity(self.id)
+
+        fused_kernel = kernel_3x3 + kernel_1x1 + kernel_id
+        fused_bias = bias_3x3 + bias_1x1 + bias_id
+
+        conv = nn.Conv2d(
+            self.c1, self.c2, 3, 1, 1, groups=self.g, bias=True
+        ).to(fused_kernel.device)
+        conv.weight.data.copy_(fused_kernel)
+        conv.bias.data.copy_(fused_bias)
+
+        # Replace multi-branch with single conv
+        self.conv = conv
+        del self.conv_3x3
+        del self.conv_1x1
+        if hasattr(self, "id"):
+            del self.id
+        self.forward = self._forward_fused
+
+    def _forward_fused(self, x):
+        return self.conv(x)
+
+    @staticmethod
+    def _fuse_bn(conv, bn):
+        kernel = conv.weight
+        running_mean = bn.running_mean
+        running_var = bn.running_var
+        gamma = bn.weight
+        beta = bn.bias
+        eps = bn.eps
+        std = (running_var + eps).sqrt()
+        t = (gamma / std).reshape(-1, 1, 1, 1)
+        return kernel * t, beta - running_mean * gamma / std
+
+    def _fuse_bn_identity(self, bn):
+        if bn is None:
+            return 0, 0
+        input_dim = self.c2 // self.g
+        kernel_val = np.zeros((self.c2, input_dim, 3, 3), dtype=np.float32)
+        for i in range(self.c2):
+            kernel_val[i, i % input_dim, 1, 1] = 1
+        kernel = torch.from_numpy(kernel_val).to(bn.weight.device)
+        running_mean = bn.running_mean
+        running_var = bn.running_var
+        gamma = bn.weight
+        beta = bn.bias
+        eps = bn.eps
+        std = (running_var + eps).sqrt()
+        t = (gamma / std).reshape(-1, 1, 1, 1)
+        return kernel * t, beta - running_mean * gamma / std
+
+    @staticmethod
+    def _pad_1x1_to_3x3(kernel):
+        if kernel is None:
+            return 0
+        return F.pad(kernel, [1, 1, 1, 1])
+
+class ChannelGate(nn.Module):
+    """Learnable per-channel gate that adaptively prunes channels.
+
+    Args:
+        channels: Number of input/output channels
+        init_keep_prob: Initial probability of keeping a channel (0.0–1.0)
+        regularize: Whether to apply L1 sparsity loss on gate logits
+    """
+
+    def __init__(self, channels, init_keep_prob=0.85, regularize=True):
+        super().__init__()
+        self.channels = channels
+        self.regularize = regularize
+        # Learnable logit per channel
+        logit_init = -torch.log(torch.tensor(1.0 / init_keep_prob - 1.0))
+        self.gate_logits = nn.Parameter(torch.full((1, channels, 1, 1), logit_init))
+
+    def forward(self, x):
+        if self.training:
+            # Soft gate during training
+            gate = torch.sigmoid(self.gate_logits)
+            return x * gate
+        else:
+            # Hard gate during inference
+            gate = (torch.sigmoid(self.gate_logits) > 0.5).float()
+            return x * gate
+
+    def sparsity_loss(self):
+        """L1 sparsity regularization loss — encourages binary gate decisions."""
+        if not self.regularize or not self.training:
+            return 0.0
+        gate = torch.sigmoid(self.gate_logits)
+        return gate.mean()  # lower mean = more channels zeroed
+
+    def frac_active(self):
+        """Fraction of channels kept (sigmoid(g) > 0.5) — for logging."""
+        with torch.no_grad():
+            gate = torch.sigmoid(self.gate_logits)
+            return (gate > 0.5).float().mean().item()
+
+    def extra_repr(self):
+        return f"channels={self.channels}, regularize={self.regularize}"
+class ReparamBottleneck(nn.Module):
+    """Bottleneck block with reparameterizable convolutions.
+
+    Matches the standard Ultralytics Bottleneck signature:
+      Conv(c, c, 3) -> Conv(c, c, 3)  with optional shortcut.
+    Both convs are reparameterized (train multi-branch, infer single-branch).
+    """
+
+    def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=1.0):
+        super().__init__()
+        self.cv1 = ReparamConvBlock(c1, c2, k=3, s=1, g=g)
+        self.cv2 = ReparamConvBlock(c2, c2, k=3, s=1, g=g)
+        self.shortcut = shortcut and c1 == c2
+
+    def forward(self, x):
+        return x + self.cv2(self.cv1(x)) if self.shortcut else self.cv2(self.cv1(x))
+
+    @torch.no_grad()
+    def fuse_convs(self):
+        self.cv1.fuse_convs()
+        self.cv2.fuse_convs()
+class ReparamC3k2(C2f):
+    """C3k2 variant using ReparamBottleneck (3×3 + 1×1 reparam convs)."""
+
+    def __init__(self, c1, c2, n=1, c3k=False, e=0.5, attn=False, g=1, shortcut=True):
+        super().__init__(c1, c2, n, shortcut, g, e)
+        self.m = nn.ModuleList(
+            ReparamBottleneck(self.c, self.c, shortcut, g) for _ in range(n)
+        )
+
+
+class GatedC3k2(nn.Module):
+    """Wraps a standard C3k2 with learnable channel gating on its input."""
+
+    def __init__(self, c1, c2, n=1, c3k=False, e=0.5, attn=False, g=1, shortcut=True):
+        super().__init__()
+        self.gate = ChannelGate(c1, init_keep_prob=0.85, regularize=True)
+        self.c3k2 = C3k2(c1, c2, n, c3k, e, attn, g, shortcut)
+
+    def forward(self, x):
+        return self.c3k2(self.gate(x))
+
+    @property
+    def m(self):
+        return self.c3k2.m
+
+    @property
+    def cv1(self):
+        return self.c3k2.cv1
+
+    @property
+    def cv2(self):
+        return self.c3k2.cv2
+
+class GhostBottleneck(nn.Module):
+    """Bottleneck replacement using GhostConv internally.
+
+    Matches standard Bottleneck interface:
+      Conv(c, c, 3) -> Conv(c, c, 3)  with optional shortcut.
+    But each Conv is replaced by GhostConv (standard + cheap depthwise).
+    """
+
+    def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=1.0):
+        super().__init__()
+        self.cv1 = GhostConvReparam(c1, c2, k=3, s=1)
+        self.cv2 = GhostConvReparam(c2, c2, k=3, s=1)
+        self.shortcut = shortcut and c1 == c2
+
+    def forward(self, x):
+        return x + self.cv2(self.cv1(x)) if self.shortcut else self.cv2(self.cv1(x))
+
+
+class GhostConvReparam(nn.Module):
+    """GhostConv with reparameterizable 5x5 vs 3x3 primary path.
+
+    Primary:  Conv(c1, c_, 3)    → c_ = c2 // 2 channels
+    Cheap:    DWConv(c_, c_, 5)  → depthwise 5x5 on c_ channels
+    Concatenate along channel dim → c2 channels.
+
+    During training: both branches active.
+    During inference: can fuse primary BN into conv.
+    """
+
+    def __init__(self, c1, c2, k=3, s=1):
+        super().__init__()
+        c_ = c2 // 2
+        self.cv1 = Conv(c1, c_, k, s, act=False)  # primary
+        self.cv2 = DWConv(c_, c_, 5, 1, act=False)  # cheap
+        self.act = nn.SiLU()
+
+    def forward(self, x):
+        y = self.cv1(x)
+        return self.act(torch.cat([y, self.cv2(y)], 1))
+
+    def forward_fuse(self, x):
+        """Fused forward (after fusing BN into conv in cv1)."""
+        y = self.cv1.forward_fuse(x)
+        return self.act(torch.cat([y, self.cv2(y)], 1))
+class GhostC3k2(nn.Module):
+    """C3k2 variant where all Bottlenecks use GhostConv internally.
+
+    Matches C3k2 signature:
+      GhostC3k2(c1, c2, n=1, c3k=False, e=0.5, attn=False, g=1, shortcut=True)
+    """
+
+    def __init__(self, c1, c2, n=1, c3k=False, e=0.5, attn=False, g=1, shortcut=True):
+        super().__init__()
+        self.c = int(c2 * e)  # hidden channels
+        self.cv1 = Conv(c1, 2 * self.c, 1, 1)
+        self.cv2 = Conv((2 + n) * self.c, c2, 1)
+        self.m = nn.ModuleList(
+            GhostBottleneck(self.c, self.c, shortcut, g)
+            for _ in range(n)
+        )
+
+    def forward(self, x):
+        y = list(self.cv1(x).chunk(2, 1))
+        y.extend(m(y[-1]) for m in self.m)
+        return self.cv2(torch.cat(y, 1))

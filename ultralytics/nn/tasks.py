@@ -73,6 +73,12 @@ from ultralytics.nn.modules import (
     YOLOESegment,
     YOLOESegment26,
     v10Detect,
+    ReparamBottleneck,
+    ReparamC3k2,
+    GatedC3k2,
+    ChannelGate,
+    ReparamConvBlock,
+    GhostC3k2
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, SETTINGS, WINDOWS, YAML, colorstr, emojis
 from ultralytics.utils.checks import REMOTE_FILE_PREFIXES, check_file, check_requirements, check_suffix, check_yaml
@@ -1708,6 +1714,12 @@ def parse_model(d, ch, verbose=True):
             SCDown,
             C2fCIB,
             A2C2f,
+            ReparamBottleneck,
+            ReparamC3k2,
+            GatedC3k2,
+            ChannelGate,
+            ReparamConvBlock,
+            GhostC3k2
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1727,6 +1739,9 @@ def parse_model(d, ch, verbose=True):
             C2fCIB,
             C2PSA,
             A2C2f,
+            ReparamC3k2,
+            GatedC3k2,
+            GhostC3k2,
         }
     )
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args

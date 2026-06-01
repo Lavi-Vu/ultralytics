@@ -59,6 +59,12 @@ from .block import (
     ResNetLayer,
     SCDown,
     TorchVision,
+    ReparamBottleneck,
+    ReparamC3k2,
+    GatedC3k2,
+    ChannelGate,
+    ReparamConvBlock,
+    GhostC3k2
 )
 from .conv import (
     CBAM,
@@ -189,4 +195,10 @@ __all__ = (
     "YOLOESegment",
     "YOLOESegment26",
     "v10Detect",
+    "ReparamBottleneck",
+    "ReparamC3k2",
+    "GatedC3k2",
+    "ChannelGate",
+    "ReparamConvBlock",
+    "GhostC3k2"
 )
