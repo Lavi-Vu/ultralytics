@@ -92,6 +92,7 @@ def _patch_parse_model():
     seen_repeat_modules = False
     patched_base = False
     patched_repeat = False
+    patched_legacy = False
     out = []
 
     for line in lines:
@@ -100,6 +101,12 @@ def _patch_parse_model():
         if "repeat_modules = frozenset(" in line:
             seen_repeat_modules = True
             seen_base_modules = False
+
+        # Ensure custom modules set legacy=False (like C3k2 does)
+        if not patched_legacy and 'if m is C2fCIB:' in line:
+            out.append(f"            if m in (ReparamC3k2, GatedC3k2, GhostC3k2):")
+            out.append(f"                legacy = False")
+            patched_legacy = True
 
         # Patch within base_modules block
         if seen_base_modules and not patched_base and "C3k2," in line:

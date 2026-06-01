@@ -5,8 +5,8 @@
     "params_m": 2.5723,
     "trainable_m": 2.5723,
     "gflops": 3.06,
-    "fps": 62.8,
-    "latency_ms": 15.94
+    "fps": 3.6,
+    "latency_ms": 275.87
   },
   {
     "model": "reparam",
@@ -14,8 +14,8 @@
     "params_m": 2.7719,
     "trainable_m": 2.7719,
     "gflops": 3.33,
-    "fps": 63.0,
-    "latency_ms": 15.87
+    "fps": 3.8,
+    "latency_ms": 260.07
   },
   {
     "model": "gate",
@@ -23,17 +23,17 @@
     "params_m": 2.5735,
     "trainable_m": 2.5735,
     "gflops": 3.06,
-    "fps": 59.6,
-    "latency_ms": 16.78
+    "fps": 3.6,
+    "latency_ms": 281.38
   },
   {
     "model": "combined",
     "yaml": "yolo26n_combined",
-    "params_m": 3.6386,
-    "trainable_m": 3.6386,
-    "gflops": 5.08,
-    "fps": 64.2,
-    "latency_ms": 15.58
+    "params_m": 2.7731,
+    "trainable_m": 2.7731,
+    "gflops": 3.33,
+    "fps": 4.1,
+    "latency_ms": 244.04
   },
   {
     "model": "neck_ghost",
@@ -41,8 +41,8 @@
     "params_m": 2.4429,
     "trainable_m": 2.4429,
     "gflops": 2.98,
-    "fps": 69.2,
-    "latency_ms": 14.46
+    "fps": 4.7,
+    "latency_ms": 213.78
   },
   {
     "model": "neck_light",
@@ -50,8 +50,8 @@
     "params_m": 1.821,
     "trainable_m": 1.821,
     "gflops": 2.58,
-    "fps": 79.3,
-    "latency_ms": 12.62
+    "fps": 4.7,
+    "latency_ms": 212.25
   },
   {
     "model": "neck_wide",
@@ -59,7 +59,7 @@
     "params_m": 1.7953,
     "trainable_m": 1.7953,
     "gflops": 2.26,
-    "fps": 68.9,
-    "latency_ms": 14.51
+    "fps": 5.3,
+    "latency_ms": 187.6
   }
 ]
