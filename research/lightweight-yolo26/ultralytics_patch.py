@@ -51,7 +51,9 @@ class GatedC3k2(nn.Module):
         self.c3k2 = C3k2(c1, c2, n, c3k, e, attn, g, shortcut)
 
     def forward(self, x):
-        return self.c3k2(self.gate(x))
+        # Cast gate output to input dtype to prevent float16/32 mismatch
+        # during AMP training (ChannelGate weights may stay fp32)
+        return self.c3k2(self.gate(x).to(x.dtype))
 
     @property
     def m(self):
