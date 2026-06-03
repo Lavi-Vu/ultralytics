@@ -75,7 +75,7 @@ from ultralytics.nn.modules import (
     v10Detect,
     ShapeAttention
 )
-from ultralytics.nn.modules.transformer_rl import DynamicTransformerBlock,RLPruningController
+from ultralytics.nn.modules.transformer_rl import DynamicTransformerBlock, RLPruningController
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, SETTINGS, WINDOWS, YAML, colorstr, emojis
 from ultralytics.utils.checks import REMOTE_FILE_PREFIXES, check_file, check_requirements, check_suffix, check_yaml
 from ultralytics.utils.loss import (
