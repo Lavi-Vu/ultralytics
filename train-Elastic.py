@@ -55,11 +55,11 @@ class ElasticResourceTrainer(DetectionTrainer):
 # 3. Main execution scope
 if __name__ == "__main__":
     # Point directly to your custom elastic layout yaml
-    model = YOLO("/home/lavi/ultralytics/elactic_yolo.yaml") 
+    model = YOLO("elactic_yolo.yaml") 
     
     # Pass the trainer class into the model trainer parameter
     model.train(
-        data="/home/lavi/ultralytics/ultralytics/cfg/datasets/coco8.yaml", 
+        data="ultralytics/cfg/datasets/coco.yaml", 
         epochs=50, 
         imgsz=640, 
         trainer=ElasticResourceTrainer  # <--- Injected here
