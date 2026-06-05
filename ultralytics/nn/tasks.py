@@ -101,7 +101,7 @@ from ultralytics.utils.torch_utils import (
     smart_inference_mode,
     time_sync,
 )
-
+from ultralytics.nn.modules.Elastic import ElasticBlock, GumbelRouter
 
 class BaseModel(torch.nn.Module):
     """Base class for all YOLO models in the Ultralytics family.
@@ -1711,7 +1711,8 @@ def parse_model(d, ch, verbose=True):
             C2fCIB,
             A2C2f,
             DynamicTransformerBlock,
-            ShapeAttention
+            ShapeAttention,
+            ElasticBlock
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1746,6 +1747,25 @@ def parse_model(d, ch, verbose=True):
                 with contextlib.suppress(ValueError):
                     args[j] = locals()[a] if a in locals() else ast.literal_eval(a)
         n = n_ = max(round(n * depth), 1) if n > 1 else n  # depth gain
+        # ------------------------------------------------------------------
+        # ADDITION 2: Intercept ElasticBlock parsing to safely unpack config parameters
+        # ------------------------------------------------------------------
+        is_elastic = False
+        if m is ElasticBlock:
+            is_elastic = True
+            # Expected format in YAML config: [-1, 1, ElasticBlock, ['C3k2', 256, False]]
+            child_module_str = args[0]
+            child_module_class = globals()[child_module_str] if child_module_str in globals() else getattr(torch.nn, child_module_str)
+            
+            # Temporarily point m to target block structure so native channel logic processes it seamlessly
+            m = child_module_class
+            args = args[1:]  # Strip string name argument to align with typical base inputs
+            
+            # If target child class typically relies on internal loop depth repetitions, register it
+            is_repeat_block = m in repeat_modules
+        else:
+            is_repeat_block = m in repeat_modules
+        # ------------------------------------------------------------------
         if m in base_modules:
             c1, c2 = ch[f], args[0]
             if c2 != nc:  # if c2 != nc (e.g., Classify() output)
@@ -1822,9 +1842,21 @@ def parse_model(d, ch, verbose=True):
             args = [*args[1:]]
         else:
             c2 = ch[f]
+        # ------------------------------------------------------------------
+        # ADDITION 3: Module construction wrapper logic
+        # ------------------------------------------------------------------
+        if is_elastic:
+            # First construct the base inner module target using fully evaluated arguments
+            inner_block = torch.nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)
+            
+            # Wrap the compiled inner_block into your ElasticBlock container
+            m_ = ElasticBlock(c1=args[0], heavy_block=inner_block)
+            t = f"ElasticBlock({child_module_str})"
+        else:
+            m_ = torch.nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)  # module
+            t = str(m)[8:-2].replace("__main__.", "")  # module type
+        # ------------------------------------------------------------------
 
-        m_ = torch.nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)  # module
-        t = str(m)[8:-2].replace("__main__.", "")  # module type
         m_.np = sum(x.numel() for x in m_.parameters())  # number params
         m_.i, m_.f, m_.type = i, f, t  # attach index, 'from' index, type
         if verbose:
