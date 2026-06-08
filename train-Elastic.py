@@ -60,7 +60,8 @@ if __name__ == "__main__":
     # Pass the trainer class into the model trainer parameter
     model.train(
         data="ultralytics/cfg/datasets/coco.yaml", 
-        epochs=50, 
-        imgsz=640, 
+        epochs=250, 
+        imgsz=640,
+        batch=40,
         trainer=ElasticResourceTrainer  # <--- Injected here
     )
