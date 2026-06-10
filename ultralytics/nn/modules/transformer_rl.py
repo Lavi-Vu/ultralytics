@@ -26,9 +26,11 @@ class RLPruningController(nn.Module):
 class DynamicPSABlock(nn.Module):
     """
     Enhanced PSABlock that mirrors the proven YOLO26 PSABlock architecture
-    but adds a soft spatial gate for dynamic token weighting.
+    with a numerically stable soft spatial gate.
 
     Uses the exact same Attention + FFN pattern as PSABlock for compatibility.
+    The soft gate uses residual formulation: output = x + alpha * (gate * x - x)
+    where alpha is initialized near 0 so the gate starts as identity.
     """
     def __init__(self, c, attn_ratio=0.5, num_heads=4, shortcut=True):
         super().__init__()
@@ -36,11 +38,16 @@ class DynamicPSABlock(nn.Module):
         self.ffn = nn.Sequential(Conv(c, c * 2, 1), Conv(c * 2, c, 1, act=False))
         self.add = shortcut
 
-        # Soft spatial gate (lightweight, differentiable)
-        # Scores each spatial token and re-weights — no tokens are destroyed
-        self.gate_norm = nn.LayerNorm(c)
-        self.gate_proj = nn.Linear(c, 1)
-        self.gate_temp = nn.Parameter(torch.ones(1) * 1.0)
+        # Soft spatial gate — residual formulation (NaN-safe)
+        # gate_weight initialized near 0 → block starts as pure PSABlock
+        self.gate_norm = nn.LayerNorm(c, eps=1e-6)
+        self.gate_proj = nn.Linear(c, 1, bias=True)
+        # Initialize gate_proj to output near-zero → sigmoid(~0) ≈ 0.5 → gate_delta ≈ 0
+        nn.init.zeros_(self.gate_proj.weight)
+        nn.init.zeros_(self.gate_proj.bias)
+        # Learnable blend factor: sigmoid(-5)≈0.007 → gate is ~identity at init
+        # The block starts as a pure PSABlock and gradually learns gating
+        self.gate_alpha = nn.Parameter(torch.full((1,), -5.0))
 
     def forward(self, x):
         B, C, H, W = x.shape
@@ -49,15 +56,24 @@ class DynamicPSABlock(nn.Module):
         x = x + self.attn(x) if self.add else self.attn(x)
         x = x + self.ffn(x) if self.add else self.ffn(x)
 
-        # --- Soft spatial gate ---
+        # --- Numerically stable soft spatial gate ---
+        # Residual: out = x + alpha * (gated_x - x)
+        # When alpha=0 → out=x (identity, safe start)
+        # When alpha→1 → out = gated_x (full gate effect)
+        alpha = torch.sigmoid(self.gate_alpha)  # ∈ (0, 1)
+
         flat = x.permute(0, 2, 3, 1).reshape(B, H * W, C)  # [B, N, C]
         scores = self.gate_proj(self.gate_norm(flat)).squeeze(-1)  # [B, N]
-        temp = torch.clamp(self.gate_temp.abs(), 0.1, 5.0)
-        gate = torch.sigmoid(scores / temp).unsqueeze(-1)  # [B, N, 1]
-        # Normalize so mean gate ≈ 1 (preserves activation magnitude)
-        gate = gate / (gate.mean(dim=1, keepdim=True).detach() + 1e-6)
-        flat = flat * gate
-        x = flat.reshape(B, H, W, C).permute(0, 3, 1, 2)
+        # Clamp scores to prevent extreme sigmoid inputs
+        scores = torch.clamp(scores, -6.0, 6.0)
+        gate = torch.sigmoid(scores).unsqueeze(-1)  # [B, N, 1] ∈ (0, 1)
+
+        # Gated version: scale each token by its gate value
+        gated_flat = flat * (1.0 + 2.0 * (gate - 0.5))  # gate=0.5 → x1.0, gate=1→x2, gate=0→x0
+        # Residual blend: starts at x (alpha=0), gradually learns gating
+        out_flat = flat + alpha * (gated_flat - flat)
+
+        x = out_flat.reshape(B, H, W, C).permute(0, 3, 1, 2)
 
         return x
 
