@@ -2,11 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from ultralytics.nn.modules import Conv
+from ultralytics.nn.modules.block import Attention
+
 
 class RLPruningController(nn.Module):
     """
-    A lightweight RL policy network that predicts the pruning ratio 
-    based on a global image descriptor.
+    RL policy network that predicts a pruning ratio from a global image descriptor.
+    Kept for backward compatibility; not used by the improved DynamicTransformerBlock.
     """
     def __init__(self, input_dim=256, hidden_dim=64):
         super().__init__()
@@ -14,92 +16,108 @@ class RLPruningController(nn.Module):
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, 1),
-            nn.Sigmoid() # Outputs ratio rho between 0 and 1
+            nn.Sigmoid()
         )
 
     def forward(self, x):
         return self.net(x)
 
-class DynamicTransformerBlock(nn.Module):
+
+class DynamicPSABlock(nn.Module):
     """
-    Transformer Block for YOLO26 with Depthwise Separable Attention 
-    and Dynamic Token Pruning.
-    Integrated for Ultralytics parse_model.
+    Enhanced PSABlock that mirrors the proven YOLO26 PSABlock architecture
+    but adds a soft spatial gate for dynamic token weighting.
+
+    Uses the exact same Attention + FFN pattern as PSABlock for compatibility.
     """
-    def __init__(self, c1, c2, *args):
-        # c1: input channels (passed by parse_model)
-        # c2: output channels (first arg in YAML list)
-        # args: optional arguments (e.g., num_heads)
+    def __init__(self, c, attn_ratio=0.5, num_heads=4, shortcut=True):
         super().__init__()
-        self.c = c2
-        self.num_heads = args[0] if len(args) > 0 else 4
-        
-        # Lazy-initialize controller and qkv in forward (input channels may vary)
-        self.controller = None
-        self.qkv = None
-        self.proj = nn.Linear(c2, c2)
-        # we'll apply LayerNorm dynamically in forward based on actual channel dim
-        self.norm = None
+        self.attn = Attention(c, attn_ratio=attn_ratio, num_heads=num_heads)
+        self.ffn = nn.Sequential(Conv(c, c * 2, 1), Conv(c * 2, c, 1, act=False))
+        self.add = shortcut
+
+        # Soft spatial gate (lightweight, differentiable)
+        # Scores each spatial token and re-weights — no tokens are destroyed
+        self.gate_norm = nn.LayerNorm(c)
+        self.gate_proj = nn.Linear(c, 1)
+        self.gate_temp = nn.Parameter(torch.ones(1) * 1.0)
 
     def forward(self, x):
-        # x shape: [B, C, H, W]
         B, C, H, W = x.shape
-        N = H * W
-        
-        # 1. Generate global descriptor internally for RL Controller (GAP)
-        global_descriptor = torch.mean(x, dim=(2, 3))
 
-        # Reshape to tokens: [B, N, C]
-        flat_x = x.permute(0, 2, 3, 1).flatten(1, 2)  # [B, N, C]
+        # --- Same as PSABlock ---
+        x = x + self.attn(x) if self.add else self.attn(x)
+        x = x + self.ffn(x) if self.add else self.ffn(x)
 
-        # Lazy init controller to match actual channel dim
-        if self.controller is None:
-            self.controller = RLPruningController(input_dim=flat_x.size(-1)).to(x.device)
+        # --- Soft spatial gate ---
+        flat = x.permute(0, 2, 3, 1).reshape(B, H * W, C)  # [B, N, C]
+        scores = self.gate_proj(self.gate_norm(flat)).squeeze(-1)  # [B, N]
+        temp = torch.clamp(self.gate_temp.abs(), 0.1, 5.0)
+        gate = torch.sigmoid(scores / temp).unsqueeze(-1)  # [B, N, 1]
+        # Normalize so mean gate ≈ 1 (preserves activation magnitude)
+        gate = gate / (gate.mean(dim=1, keepdim=True).detach() + 1e-6)
+        flat = flat * gate
+        x = flat.reshape(B, H, W, C).permute(0, 3, 1, 2)
 
-        # Dynamic LayerNorm to match last-dimension channels
-        flat_x = F.layer_norm(flat_x, (flat_x.size(-1),), eps=1e-6)
+        return x
 
-        # 2. RL-Guided Token Pruning
-        if self.controller is not None:
-            # Predict pruning ratio rho
-            rho = self.controller(global_descriptor) # [B, 1]
-            
-            # Calculate tokens to keep
-            k = int(N * (1 - rho.detach().mean().item()))
-            k = max(1, min(k, N))
-            
-            # Importance Scoring (L2 Norm)
-            scores = torch.norm(flat_x, p=2, dim=-1) # [B, N]
-            _, indices = torch.topk(scores, k, dim=-1)
-            
-            batch_indices = torch.arange(B).view(-1, 1).expand(B, k).to(x.device)
-            flat_x = flat_x[batch_indices, indices] # [B, k, C]
-            current_k = k
-        else:
-            current_k = N
 
-        # 3. Efficient MHA
-        # Lazy-init qkv to accept the actual token/channel dimension
-        if self.qkv is None or self.qkv.in_features != flat_x.size(-1):
-            self.qkv = nn.Linear(flat_x.size(-1), self.c * 3, bias=False).to(x.device)
+class DynamicTransformerBlock(nn.Module):
+    """
+    Improved DynamicTransformerBlock that replaces C2PSA in YOLO26.
 
-        # compute per-head dimension and validate
-        if self.c % self.num_heads != 0:
-            raise ValueError(f"channels {self.c} not divisible by num_heads {self.num_heads}")
-        d = self.c // self.num_heads
+    Architecture follows the proven C2PSA pattern exactly:
+      1. cv1 splits channels into (skip, process) streams
+      2. Process stream goes through N x DynamicPSABlock
+         (Attention + FFN + soft spatial gate)
+      3. cv2 merges streams back
 
-        qkv = self.qkv(flat_x).view(B, current_k, 3, self.num_heads, d).permute(2, 0, 3, 1, 4)
-        q, k_tensor, v = qkv[0], qkv[1], qkv[2]  # q,k,v -> [B, heads, k, d]
+    The soft spatial gate in each DynamicPSABlock provides a
+    differentiable, information-preserving alternative to hard
+    token pruning. It learns to weight spatial positions by
+    importance without destroying any information.
 
-        attn = (q @ k_tensor.transpose(-2, -1)) * (q.shape[-1] ** -0.5)
-        attn = F.softmax(attn, dim=-1)
-        
-        out = (attn @ v).transpose(1, 2).reshape(B, current_k, self.c)
-        out = self.proj(out)
+    This replaces the original block which had:
+      - Hard token pruning (destroyed spatial info → big mAP drop)
+      - No FFN (missing key feature transform)
+      - No channel split (poor gradient flow)
+      - Mean-expand restoration (all tokens identical → collapse)
+    """
+    def __init__(self, c1, c2, *args):
+        super().__init__()
+        # c2: output channels (first arg in YAML list)
+        # args[0]: num_heads (default follows C2PSA convention)
+        # Remaining args are ignored for YAML compatibility
 
-        # 4. Restore Spatial Dimensions
-        if current_k < N:
-            out = out.mean(dim=1, keepdim=True).expand(B, N, self.c)
-        
-        out = out.transpose(1, 2).reshape(B, self.c, H, W)
-        return out + x
+        assert c1 == c2, f"DynamicTransformerBlock requires c1 == c2, got {c1} != {c2}"
+
+        self.c1 = c1
+        self.c2 = c2
+        self.num_heads = args[0] if len(args) > 0 else 4
+
+        # Hidden channel count — same ratio as C2PSA (e=0.5)
+        self.hidden_c = c2 // 2
+
+        # ---- Channel split via 1x1 conv (identical to C2PSA) ----
+        self.cv1 = Conv(c1, 2 * self.hidden_c, 1, 1)
+
+        # ---- Stack of DynamicPSABlocks ----
+        # Use 2 blocks to match C2PSA n=2 in baseline
+        self.m = nn.Sequential(
+            DynamicPSABlock(self.hidden_c, attn_ratio=0.5,
+                            num_heads=self.num_heads, shortcut=True),
+            DynamicPSABlock(self.hidden_c, attn_ratio=0.5,
+                            num_heads=self.num_heads, shortcut=True),
+        )
+
+        # ---- Output merge (identical to C2PSA) ----
+        self.cv2 = Conv(2 * self.hidden_c, c2, 1)
+
+    def forward(self, x):
+        """x: [B, C, H, W] → [B, C, H, W]"""
+        # Split into skip and process branches (same as C2PSA)
+        a, b = self.cv1(x).split((self.hidden_c, self.hidden_c), dim=1)
+        # Process only branch b through transformer blocks
+        b = self.m(b)
+        # Merge and project
+        return self.cv2(torch.cat((a, b), dim=1))
