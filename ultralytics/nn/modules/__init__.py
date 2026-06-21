@@ -107,6 +107,19 @@ from .transformer import (
     TransformerLayer,
     ShapeAttention,
 )
+from .hybrid_block import (
+    C2fHybrid,
+    C2fHybridGlobal,
+    EdgeRFStage,
+    LightTransformerStage,
+)
+from .light_transformer import (
+    WindowedAttention,
+    GlobalAttention,
+    LightTransformerBlock,
+    InterleavedTransformerStage,
+    MLPFFN,
+)
 
 __all__ = (
     "AIFI",
@@ -190,5 +203,14 @@ __all__ = (
     "YOLOESegment",
     "YOLOESegment26",
     "v10Detect",
-    "ShapeAttention"
+    "ShapeAttention",
+    "C2fHybrid",
+    "C2fHybridGlobal",
+    "EdgeRFStage",
+    "LightTransformerStage",
+    "WindowedAttention",
+    "GlobalAttention",
+    "LightTransformerBlock",
+    "InterleavedTransformerStage",
+    "MLPFFN",
 )

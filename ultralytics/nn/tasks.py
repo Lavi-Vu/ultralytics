@@ -33,6 +33,8 @@ from ultralytics.nn.modules import (
     C2f,
     C2fAttn,
     C2fCIB,
+    C2fHybrid,
+    C2fHybridGlobal,
     C2fPSA,
     C3Ghost,
     C3k2,
@@ -47,6 +49,7 @@ from ultralytics.nn.modules import (
     Detect,
     DWConv,
     DWConvTranspose2d,
+    EdgeRFStage,
     Focus,
     GhostBottleneck,
     GhostConv,
@@ -54,6 +57,7 @@ from ultralytics.nn.modules import (
     HGStem,
     ImagePoolingAttn,
     Index,
+    LightTransformerStage,
     LRPCHead,
     Pose,
     Pose26,
@@ -1712,7 +1716,11 @@ def parse_model(d, ch, verbose=True):
             A2C2f,
             DynamicTransformerBlock,
             ShapeAttention,
-            ElasticBlock
+            ElasticBlock,
+            C2fHybrid,
+            C2fHybridGlobal,
+            LightTransformerStage,
+            EdgeRFStage,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1732,6 +1740,8 @@ def parse_model(d, ch, verbose=True):
             C2fCIB,
             C2PSA,
             A2C2f,
+            C2fHybrid,
+            C2fHybridGlobal,
         }
     )
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
@@ -1902,7 +1912,7 @@ def guess_model_scale(model_path):
         (str): The size character of the model's scale (n, s, m, l, or x), or empty string if not found.
     """
     try:
-        return re.search(r"yolo(e-)?[v]?\d+([nslmx])", Path(model_path).stem).group(2)
+        return re.search(r"(?:yolo(?:e-)?[v]?\d+|edgerf-)([nslmx])", Path(model_path).stem).group(1)
     except AttributeError:
         return ""
 
