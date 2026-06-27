@@ -23,117 +23,116 @@ class RLPruningController(nn.Module):
         return self.net(x)
 
 
+class MultiHeadGate(nn.Module):
+    """
+    Multi-headed soft spatial gate.
+    
+    Instead of a single scalar importance score per token, uses multiple
+    gate heads with softmax normalization across heads. This allows the
+    gate to capture multiple independent notions of token importance
+    (e.g., foreground vs background, different object scales).
+    
+    Args:
+        dim (int): Channel dimension
+        num_heads (int): Number of independent gate heads
+        init_alpha (float): Initial gate blend factor (sigmoid(-5) ≈ 0.007)
+    """
+    def __init__(self, dim, num_heads=4, init_alpha=-5.0):
+        super().__init__()
+        self.num_heads = num_heads
+        self.norm = nn.LayerNorm(dim, eps=1e-6)
+        self.proj = nn.Linear(dim, num_heads, bias=True)
+        nn.init.zeros_(self.proj.weight)
+        nn.init.zeros_(self.proj.bias)
+        self.gate_alpha = nn.Parameter(torch.full((1,), init_alpha))
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        flat = x.permute(0, 2, 3, 1).reshape(B, H * W, C)
+        scores = self.proj(self.norm(flat))  # [B, N, H]
+        scores = torch.clamp(scores, -6.0, 6.0)
+        gate = torch.sigmoid(scores)  # [B, N, H], each head ∈ (0,1)
+        gate = gate.mean(dim=-1, keepdim=True)  # [B, N, 1] — averaged over heads
+        alpha = torch.sigmoid(self.gate_alpha)
+        gated = flat * (1.0 + 2.0 * (gate - 0.5))
+        out = flat + alpha * (gated - flat)
+        return out.reshape(B, H, W, C).permute(0, 3, 1, 2)
+
+
 class DynamicPSABlock(nn.Module):
     """
-    Enhanced PSABlock that mirrors the proven YOLO26 PSABlock architecture
-    with a numerically stable soft spatial gate.
-
-    Uses the exact same Attention + FFN pattern as PSABlock for compatibility.
-    The soft gate uses residual formulation: output = x + alpha * (gate * x - x)
-    where alpha is initialized near 0 so the gate starts as identity.
+    Enhanced PSABlock with multi-headed soft spatial gating.
+    
+    Architecture:
+      x → pre_gate → Attention → post_gate → FFN → out
+      
+    The pre-attention gate filters irrelevant tokens before attention,
+    while the post-FFN gate (original design) refines the output.
+    Both gates use multi-headed scoring for richer importance estimation.
+    
+    Args:
+        c (int): Channel dimension
+        attn_ratio (float): Key/query dimension ratio for Attention
+        num_heads (int): Number of attention heads
+        num_gate_heads (int): Number of gate heads
+        shortcut (bool): Use residual connections
     """
-    def __init__(self, c, attn_ratio=0.5, num_heads=4, shortcut=True):
+    def __init__(self, c, attn_ratio=0.5, num_heads=4, num_gate_heads=4, shortcut=True):
         super().__init__()
         self.attn = Attention(c, attn_ratio=attn_ratio, num_heads=num_heads)
         self.ffn = nn.Sequential(Conv(c, c * 2, 1), Conv(c * 2, c, 1, act=False))
         self.add = shortcut
 
-        # Soft spatial gate — residual formulation (NaN-safe)
-        # gate_weight initialized near 0 → block starts as pure PSABlock
-        self.gate_norm = nn.LayerNorm(c, eps=1e-6)
-        self.gate_proj = nn.Linear(c, 1, bias=True)
-        # Initialize gate_proj to output near-zero → sigmoid(~0) ≈ 0.5 → gate_delta ≈ 0
-        nn.init.zeros_(self.gate_proj.weight)
-        nn.init.zeros_(self.gate_proj.bias)
-        # Learnable blend factor: sigmoid(-5)≈0.007 → gate is ~identity at init
-        # The block starts as a pure PSABlock and gradually learns gating
-        self.gate_alpha = nn.Parameter(torch.full((1,), -5.0))
+        self.pre_gate = MultiHeadGate(c, num_heads=num_gate_heads, init_alpha=-5.0)
+        self.post_gate = MultiHeadGate(c, num_heads=num_gate_heads, init_alpha=-5.0)
 
     def forward(self, x):
-        B, C, H, W = x.shape
-
-        # --- Same as PSABlock ---
-        x = x + self.attn(x) if self.add else self.attn(x)
+        gated = self.pre_gate(x)
+        x = x + self.attn(gated) if self.add else self.attn(gated)
+        x = self.post_gate(x)
         x = x + self.ffn(x) if self.add else self.ffn(x)
-
-        # --- Numerically stable soft spatial gate ---
-        # Residual: out = x + alpha * (gated_x - x)
-        # When alpha=0 → out=x (identity, safe start)
-        # When alpha→1 → out = gated_x (full gate effect)
-        alpha = torch.sigmoid(self.gate_alpha)  # ∈ (0, 1)
-
-        flat = x.permute(0, 2, 3, 1).reshape(B, H * W, C)  # [B, N, C]
-        scores = self.gate_proj(self.gate_norm(flat)).squeeze(-1)  # [B, N]
-        # Clamp scores to prevent extreme sigmoid inputs
-        scores = torch.clamp(scores, -6.0, 6.0)
-        gate = torch.sigmoid(scores).unsqueeze(-1)  # [B, N, 1] ∈ (0, 1)
-
-        # Gated version: scale each token by its gate value
-        gated_flat = flat * (1.0 + 2.0 * (gate - 0.5))  # gate=0.5 → x1.0, gate=1→x2, gate=0→x0
-        # Residual blend: starts at x (alpha=0), gradually learns gating
-        out_flat = flat + alpha * (gated_flat - flat)
-
-        x = out_flat.reshape(B, H, W, C).permute(0, 3, 1, 2)
-
         return x
 
 
 class DynamicTransformerBlock(nn.Module):
     """
-    Improved DynamicTransformerBlock that replaces C2PSA in YOLO26.
-
-    Architecture follows the proven C2PSA pattern exactly:
+    Enhanced DynamicTransformerBlock replacing C2PSA in YOLO26-RL.
+    
+    Follows the proven C2PSA pattern:
       1. cv1 splits channels into (skip, process) streams
-      2. Process stream goes through N x DynamicPSABlock
-         (Attention + FFN + soft spatial gate)
+      2. Process stream goes through N × DynamicPSABlock
+         (multi-headed pre-gate → Attention → multi-headed post-gate → FFN)
       3. cv2 merges streams back
-
-    The soft spatial gate in each DynamicPSABlock provides a
-    differentiable, information-preserving alternative to hard
-    token pruning. It learns to weight spatial positions by
-    importance without destroying any information.
-
-    This replaces the original block which had:
-      - Hard token pruning (destroyed spatial info → big mAP drop)
-      - No FFN (missing key feature transform)
-      - No channel split (poor gradient flow)
-      - Mean-expand restoration (all tokens identical → collapse)
+    
+    Unlike the original, this version:
+      - Respects the YAML repeat count for number of blocks
+      - Uses multi-headed gating (richer token importance)
+      - Has pre-attention gating (filters before attention)
+      - Supports higher head counts for better capacity
+    
+    YAML format: [c2, num_heads, num_gate_heads]
     """
-    def __init__(self, c1, c2, *args):
+    def __init__(self, c1, c2, n=1, num_heads=4, num_gate_heads=4, *args):
         super().__init__()
-        # c2: output channels (first arg in YAML list)
-        # args[0]: num_heads (default follows C2PSA convention)
-        # Remaining args are ignored for YAML compatibility
-
         assert c1 == c2, f"DynamicTransformerBlock requires c1 == c2, got {c1} != {c2}"
 
         self.c1 = c1
         self.c2 = c2
-        self.num_heads = args[0] if len(args) > 0 else 4
-
-        # Hidden channel count — same ratio as C2PSA (e=0.5)
         self.hidden_c = c2 // 2
 
-        # ---- Channel split via 1x1 conv (identical to C2PSA) ----
         self.cv1 = Conv(c1, 2 * self.hidden_c, 1, 1)
-
-        # ---- Stack of DynamicPSABlocks ----
-        # Use 2 blocks to match C2PSA n=2 in baseline
-        self.m = nn.Sequential(
-            DynamicPSABlock(self.hidden_c, attn_ratio=0.5,
-                            num_heads=self.num_heads, shortcut=True),
-            DynamicPSABlock(self.hidden_c, attn_ratio=0.5,
-                            num_heads=self.num_heads, shortcut=True),
-        )
-
-        # ---- Output merge (identical to C2PSA) ----
+        self.m = nn.Sequential(*[
+            DynamicPSABlock(
+                self.hidden_c, attn_ratio=0.5,
+                num_heads=num_heads,
+                num_gate_heads=num_gate_heads,
+                shortcut=True,
+            )
+            for _ in range(n)
+        ])
         self.cv2 = Conv(2 * self.hidden_c, c2, 1)
 
     def forward(self, x):
-        """x: [B, C, H, W] → [B, C, H, W]"""
-        # Split into skip and process branches (same as C2PSA)
         a, b = self.cv1(x).split((self.hidden_c, self.hidden_c), dim=1)
-        # Process only branch b through transformer blocks
         b = self.m(b)
-        # Merge and project
         return self.cv2(torch.cat((a, b), dim=1))

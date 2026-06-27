@@ -1742,6 +1742,7 @@ def parse_model(d, ch, verbose=True):
             A2C2f,
             C2fHybrid,
             C2fHybridGlobal,
+            DynamicTransformerBlock,
         }
     )
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
@@ -1905,14 +1906,31 @@ def yaml_model_load(path):
 def guess_model_scale(model_path):
     """Extract the size character n, s, m, l, or x of the model's scale from the model path.
 
+    Supports naming conventions:
+        yolo26n         → 'n'  (standard YOLO)
+        yolov8s         → 's'
+        yoloe-11x       → 'x'
+        yolo26-rl-n     → 'n'  (variant with suffix)
+        edgerf-n        → 'n'  (EdgeRF)
+        yolo26-rl       → ''   (no scale suffix — defaults to first scale key)
+
     Args:
         model_path (str | Path): The path to the YOLO model's YAML file.
 
     Returns:
         (str): The size character of the model's scale (n, s, m, l, or x), or empty string if not found.
     """
+    stem = Path(model_path).stem
     try:
-        return re.search(r"(?:yolo(?:e-)?[v]?\d+|edgerf-)([nslmx])", Path(model_path).stem).group(1)
+        # Pattern 1: yolo26n, yolov8s, yoloe-11x (scale directly after version digits)
+        m = re.search(r"(?:yolo(?:e-)?[v]?\d+)([nslmx])$", stem)
+        if m:
+            return m.group(1)
+        # Pattern 2: yolo26-rl-n, edgerf-n (dash-separated scale suffix)
+        m = re.search(r"(?:yolo(?:e-)?[v]?\d+(?:-[a-z0-9]+)?|edgerf)-([nslmx])$", stem)
+        if m:
+            return m.group(1)
+        return ""
     except AttributeError:
         return ""
 
