@@ -1,5 +1,6 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
+from .modules.lightedge import LightEdgeYOLO
 from .tasks import (
     BaseModel,
     ClassificationModel,
@@ -15,6 +16,7 @@ from .tasks import (
 
 __all__ = (
     "BaseModel",
+    "LightEdgeYOLO",
     "ClassificationModel",
     "DetectionModel",
     "SegmentationModel",
