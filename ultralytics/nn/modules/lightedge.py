@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import itertools
 import math
 from copy import deepcopy
 
@@ -531,7 +532,7 @@ class LightEdgeLoss(nn.Module):
         self.giou_fn = GIoULoss()
         self.obj_boost = SmallObjectBoostLoss()
         self.alpha = 0.5
-        self.beta = 6.0
+        self.beta = 3.0
 
     def forward(self, preds: dict, batch: dict) -> tuple:
         """Compute loss. Returns (loss * batch_size, loss_items) tuple for trainer."""
@@ -557,6 +558,11 @@ class LightEdgeLoss(nn.Module):
         total_box = torch.tensor(0.0, device=device)
         total_cls = torch.tensor(0.0, device=device)
 
+        # Per-level anchor boundaries for per-level matching
+        feat_hws = [(f.shape[-2], f.shape[-1]) for f in feats]
+        lvl_sizes = [h * w for h, w in feat_hws]
+        lvl_cum = [0] + list(itertools.accumulate(lvl_sizes))
+
         for branch, topk, w in [("one2one", 1, 1.0), ("one2many", 7, 0.5)]:
             p = preds.get(branch)
             if p is None:
@@ -581,13 +587,27 @@ class LightEdgeLoss(nn.Module):
                 dbox = dbox * strides.t().unsqueeze(0)
                 dbox = dbox.squeeze(0).permute(1, 0)
 
-                iou = self._bbox_iou(dbox, gt_b)
                 cls_scores = scores_b.squeeze(0).permute(1, 0).sigmoid()
-                align = cls_scores[:, cls_b].pow(self.alpha) * iou.pow(self.beta)
+
+                gt_ctr = (gt_b[:, :2] + gt_b[:, 2:]) / 2   # [n_gt, 2] GT centers (pixels)
+                anc_ctr = (dbox[:, :2] + dbox[:, 2:]) / 2  # [N, 2] anchor box centers
+                cdist = torch.cdist(anc_ctr, gt_ctr)       # [N, n_gt] pixel distances
+                sigma = 64.0
+                prior = torch.exp(-cdist.pow(2) / (2 * sigma ** 2))
+                align = cls_scores[:, cls_b].pow(self.alpha) * prior
 
                 for j in range(n_gt):
-                    _, topk_idx = align[:, j].topk(min(topk, align.shape[0]))
-                    assign_scores = iou[topk_idx, j]
+                    # Per-level matching: pick floor(topk / n_levels) anchors from each FPN level
+                    n_levels = len(feat_hws)
+                    k_per_lvl = max(1, topk // n_levels)
+                    topk_idx_lvls = []
+                    for lvl_i in range(n_levels):
+                        s, e = lvl_cum[lvl_i], lvl_cum[lvl_i + 1]
+                        a_lvl = align[s:e, j]
+                        k = min(k_per_lvl, e - s)
+                        _, idx = a_lvl.topk(k)
+                        topk_idx_lvls.append(idx + s)
+                    topk_idx = torch.cat(topk_idx_lvls)
 
                     pos_boxes = dbox[topk_idx]
                     pos_scores = scores_b[:, :, topk_idx]
@@ -596,7 +616,7 @@ class LightEdgeLoss(nn.Module):
                     total_box = total_box + self.obj_boost(giou, gt_b[j:j+1].expand_as(pos_boxes)) * w
 
                     tgt = torch.zeros(1, self.nc, len(topk_idx), device=device)
-                    tgt[0, cls_b[j]] = assign_scores
+                    tgt[0, cls_b[j]] = 1.0
                     label = F.one_hot(cls_b[j].expand(len(topk_idx)),
                                       self.nc).float().permute(1, 0).unsqueeze(0)
                     total_cls = total_cls + self.vfl(pos_scores, tgt, label) * w
