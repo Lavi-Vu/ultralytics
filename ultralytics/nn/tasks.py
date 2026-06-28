@@ -1742,7 +1742,6 @@ def parse_model(d, ch, verbose=True):
             A2C2f,
             C2fHybrid,
             C2fHybridGlobal,
-            DynamicTransformerBlock,
         }
     )
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
