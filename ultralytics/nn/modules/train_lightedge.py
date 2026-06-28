@@ -23,8 +23,8 @@ from ultralytics import YOLO
 def parse_args():
     p = argparse.ArgumentParser(description="Train LightEdge-YOLO")
     g = p.add_argument_group("Model")
-    g.add_argument("--nano", action="store_true", help="Nano variant (~3.0M params)")
-    g.add_argument("--small", action="store_true", help="Small variant (~8.4M params)")
+    g.add_argument("--nano", action="store_true", help="Nano variant (~1.3M params, 6.3 GFLOPs)")
+    g.add_argument("--small", action="store_true", help="Small variant (~4.9M params, 22.1 GFLOPs)")
 
     g = p.add_argument_group("Data")
     g.add_argument("--data", type=str, default="coco.yaml", help="dataset YAML")

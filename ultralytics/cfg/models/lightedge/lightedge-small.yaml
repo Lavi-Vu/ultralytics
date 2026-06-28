@@ -6,13 +6,13 @@
 # Parameters
 nc: 80 # number of classes
 stem_channels: 24
-bifpn_channels: 160
+bifpn_channels: 128
 head_hidden: 80
 
-# Backbone stages
+# Backbone stages (4 stages, last 3 output levels P3/P4/P5)
 # each stage: [channels, depth, stride, expand]
 stage_configs:
-  - [48,  4, 2, 2]  # P2/4
-  - [96,  6, 2, 2]  # P3/8
-  - [192, 8, 2, 2]  # P4/16
-  - [384, 4, 2, 2]  # P5/32
+  - [32,  1, 2, 2]  # P2/4 (unused by neck, feeds P3-P5)
+  - [96,  3, 2, 2]  # P3/8
+  - [192, 4, 2, 2]  # P4/16
+  - [256, 2, 2, 2]  # P5/32

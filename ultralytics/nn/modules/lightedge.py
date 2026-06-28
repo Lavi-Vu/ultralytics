@@ -14,30 +14,30 @@ from ultralytics.nn.modules.conv import Conv, DWConv, GhostConv
 from ultralytics.utils.ops import make_divisible
 
 # ---------------------------------------------------------------------------
-# Configurations — Nano (~2.8M params) and Small (~8.5M params)
+# Configurations — Nano (~1.3M params) and Small (~4.9M params)
 # ---------------------------------------------------------------------------
 
 LIGHTEDGE_CFG = {
     "nano": {
         "stem_channels": 16,
         "stage_configs": [
-            {"channels": 32, "depth": 2, "stride": 2, "expand": 2},
-            {"channels": 64, "depth": 3, "stride": 2, "expand": 2},
-            {"channels": 128, "depth": 4, "stride": 2, "expand": 2},
-            {"channels": 256, "depth": 2, "stride": 2, "expand": 2},
+            {"channels": 16, "depth": 1, "stride": 2, "expand": 2},
+            {"channels": 48, "depth": 2, "stride": 2, "expand": 2},
+            {"channels": 96, "depth": 3, "stride": 2, "expand": 2},
+            {"channels": 128, "depth": 1, "stride": 2, "expand": 2},
         ],
-        "bifpn_channels": 96,
-        "head_hidden": 64,
+        "bifpn_channels": 64,
+        "head_hidden": 48,
     },
     "small": {
         "stem_channels": 24,
         "stage_configs": [
-            {"channels": 48, "depth": 4, "stride": 2, "expand": 2},
-            {"channels": 96, "depth": 6, "stride": 2, "expand": 2},
-            {"channels": 192, "depth": 8, "stride": 2, "expand": 2},
-            {"channels": 384, "depth": 4, "stride": 2, "expand": 2},
+            {"channels": 32, "depth": 1, "stride": 2, "expand": 2},
+            {"channels": 96, "depth": 3, "stride": 2, "expand": 2},
+            {"channels": 192, "depth": 4, "stride": 2, "expand": 2},
+            {"channels": 256, "depth": 2, "stride": 2, "expand": 2},
         ],
-        "bifpn_channels": 160,
+        "bifpn_channels": 128,
         "head_hidden": 80,
     },
 }
@@ -692,19 +692,18 @@ class LightEdgeYOLO(nn.Module):
             backbone.append(Conv(prev_ch, out_ch, k=3, s=stride))
             cur_ch = out_ch
             for j in range(depth):
-                block_in = cur_ch if j == 0 else out_ch
-                backbone.append(RepViTGhostBlock(block_in, out_ch, expand))
+                backbone.append(RepViTGhostBlock(cur_ch, out_ch, expand))
                 cur_ch = out_ch
             stage_outs.append(len(backbone) - 1)
             prev_ch = out_ch
 
-        self._p2_idx, self._p3_idx, self._p4_idx, self._p5_idx = stage_outs
+        self._p3_idx, self._p4_idx, self._p5_idx = stage_outs[-3:]
         self.backbone = nn.ModuleList(backbone)
 
     # ---- Neck -------------------------------------------------------------
 
     def _build_neck(self):
-        ch = [self.cfg["stage_configs"][i]["channels"] for i in range(1, 4)]
+        ch = [s["channels"] for s in self.cfg["stage_configs"]][-3:]
         self.neck = AdaptiveBiFPN(ch, self.cfg["bifpn_channels"])
         self._neck_ch = self.cfg["bifpn_channels"]
 
@@ -735,10 +734,12 @@ class LightEdgeYOLO(nn.Module):
 
     def predict(self, x: torch.Tensor, *args, **kwargs) -> torch.Tensor | tuple:
         feats = self._forward_backbone(x)
-        neck_feats = self.neck(feats[1:])
+        neck_feats = self.neck(feats)
         out = self.head(neck_feats)
         if isinstance(out, dict):
             out["head"] = self.head
+        elif isinstance(out, tuple) and len(out) == 2:
+            out[1]["head"] = self.head
         return out
 
     def _forward_backbone(self, x: torch.Tensor) -> list[torch.Tensor]:
@@ -746,14 +747,15 @@ class LightEdgeYOLO(nn.Module):
         for m in self.backbone:
             x = m(x)
             outs.append(x)
-        return [outs[self._p2_idx], outs[self._p3_idx],
-                outs[self._p4_idx], outs[self._p5_idx]]
+        return [outs[self._p3_idx], outs[self._p4_idx], outs[self._p5_idx]]
 
     def loss(self, batch: dict, preds=None) -> tuple:
         if not hasattr(self, "criterion"):
             self.criterion = self.init_criterion()
         if preds is None:
             preds = self.predict(batch["img"])
+        if isinstance(preds, tuple) and len(preds) == 2:
+            preds = preds[1]
         return self.criterion(preds, batch)
 
     def init_criterion(self):

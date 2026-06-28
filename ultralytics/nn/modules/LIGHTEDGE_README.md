@@ -18,8 +18,8 @@ LightEdge-YOLO is a custom architecture built on the Ultralytics framework, desi
 
 | Variant | Params | GFLOPs | Target Device |
 |---------|--------|--------|---------------|
-| **Nano** | 3.0M | 13.5 | Raspberry Pi 4/5, Jetson Nano, mobile CPU |
-| **Small** | 8.4M | 34.3 | Jetson Orin, phone GPU, edge servers |
+| **Nano** | 1.3M | 6.3 | Raspberry Pi 4/5, Jetson Nano, mobile CPU |
+| **Small** | 4.9M | 22.1 | Jetson Orin, phone GPU, edge servers |
 
 ## Quick Start
 

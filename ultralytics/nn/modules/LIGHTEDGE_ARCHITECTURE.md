@@ -4,7 +4,7 @@
 
 LightEdge-YOLO is designed from first principles for **edge deployment**. Every component is chosen to balance accuracy, speed, and quantization stability on resource-constrained hardware. The architecture targets three core metrics:
 
-1. **Parameter efficiency** — achieve competitive mAP with <3M (Nano) or <9M (Small) params
+1. **Parameter efficiency** — achieve competitive mAP with ~1.3M (Nano) or ~4.9M (Small) params
 2. **Latency predictability** — no NMS, no DFL, no dynamic branches during inference
 3. **Quantization readiness** — use SiLU activations, avoid softmax in decode path, prefer additive fusion
 
@@ -70,10 +70,12 @@ Each stage begins with a stride-2 Conv for downsampling, followed by stacked `Re
 
 | Stage | Stride | Nano Channels | Nano Depth | Small Channels | Small Depth |
 |-------|--------|---------------|------------|----------------|-------------|
-| 1     | 4      | 32            | 2          | 48             | 3           |
-| 2     | 8      | 64            | 3          | 96             | 4           |
-| 3     | 16     | 128           | 4          | 192            | 6           |
-| 4     | 32     | 256           | 2          | 384            | 3           |
+| 1 (P2)* | 4    | 16            | 1          | 32             | 1           |
+| 2 (P3)   | 8    | 48            | 2          | 96             | 3           |
+| 3 (P4)   | 16   | 96            | 3          | 192            | 4           |
+| 4 (P5)   | 32   | 128           | 1          | 256            | 2           |
+
+*Stage 1 (P2) is computed but not passed to the neck; its stride conv feeds the P3-P5 hierarchy.
 
 ### RepViTGhostBlock
 
@@ -140,10 +142,10 @@ All three fuse into a single 3×3 DWConv at inference time via `fuse_convs()`.
 ```
 Channel counts at each stage output:
   Stem:   16  (stride 2)
-  P2:     32  (stride 4) — high-res, crucial for small objects
-  P3:     64  (stride 8)
-  P4:    128  (stride 16)
-  P5:    256  (stride 32) — low-res, semantic context
+  P2:     16  (stride 4) — fine-grained features (not passed to neck)
+  P3:     48  (stride 8) — small object detection
+  P4:     96  (stride 16)
+  P5:    128  (stride 32) — semantic context
 ```
 
 ---
@@ -429,8 +431,8 @@ All Conv layers with BN support `forward_fuse()` which skips BN.
 
 | Aspect | YOLO26n | LightEdge-Nano | YOLO26s | LightEdge-Small |
 |--------|---------|----------------|---------|-----------------|
-| Params | 2.4M | 3.0M | 9.5M | 8.4M |
-| FLOPs | 5.4B | 13.5B | 20.7B | 34.3B |
+| Params | 2.4M | **1.3M** | 9.5M | **4.9M** |
+| FLOPs | 5.4B | **6.3B** | 20.7B | **22.1B** |
 | NMS | Yes | No | Yes | No |
 | DFL | Yes (reg_max=1) | No | Yes | No |
 | Head Type | Coupled + one2one | Decoupled + one2one | Coupled + one2one | Decoupled + one2one |
