@@ -50,7 +50,7 @@ def parse_args():
     g = p.add_argument_group("Validation")
     g.add_argument("--val", action="store_true", default=True,
                    help="run validation after training")
-    g.add_argument("--val-period", type=int, default=1, help="validate every N epochs")
+    g.add_argument("--save-period", type=int, default=1, help="save checkpoint every N epochs")
 
     g = p.add_argument_group("Export")
     g.add_argument("--export", action="store_true", help="export to ONNX after training")
@@ -103,7 +103,7 @@ def main():
         "exist_ok": args.exist_ok,
         "seed": args.seed,
         "val": args.val,
-        "val_period": args.val_period,
+        "save_period": args.save_period,
         "mosaic": args.mosaic,
         "mixup": args.mixup,
         "copy_paste": args.copy_paste,

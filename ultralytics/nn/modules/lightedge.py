@@ -536,11 +536,19 @@ class LightEdgeLoss(nn.Module):
     def forward(self, preds: dict, batch: dict) -> tuple:
         """Compute loss. Returns (loss * batch_size, loss_items) tuple for trainer."""
         bs = batch["img"].shape[0]
+        _, _, h, w = batch["img"].shape
         device = batch["img"].device
-        gt_boxes = batch["bbox"].to(device)
-        gt_cls = batch["cls"].long().to(device)
-        batch_idx = batch["batch_idx"].to(device)
         head = preds["head"]
+
+        gt_boxes = batch["bboxes"].to(device).clone()
+        cx, cy, bw, bh = gt_boxes[:, 0], gt_boxes[:, 1], gt_boxes[:, 2], gt_boxes[:, 3]
+        gt_boxes[:, 0] = (cx - bw / 2) * w
+        gt_boxes[:, 1] = (cy - bh / 2) * h
+        gt_boxes[:, 2] = (cx + bw / 2) * w
+        gt_boxes[:, 3] = (cy + bh / 2) * h
+
+        gt_cls = batch["cls"].long().to(device).squeeze(-1)
+        batch_idx = batch["batch_idx"].to(device)
 
         feats = preds["one2many"]["feats"]
         anchors, strides = make_anchors(feats, head.stride)
@@ -637,13 +645,24 @@ class LightEdgeYOLO(nn.Module):
         super().__init__()
         self.variant = variant.lower()
         self.nc = nc
-        self.cfg = deepcopy(LIGHTEDGE_CFG[self.variant])
         self.stride = torch.tensor([8, 16, 32])
         self.names = {i: f"{i}" for i in range(nc)}
-        self.yaml = self.cfg
         self.args = None  # set by DetectionTrainer.set_model_attributes
         self.class_weights = None  # set by BaseTrainer.set_class_weights
         self.save = []
+        self.yaml = None
+
+        if self.variant in LIGHTEDGE_CFG:
+            cfg = deepcopy(LIGHTEDGE_CFG[self.variant])
+        else:
+            from ultralytics.nn.tasks import yaml_model_load
+            cfg = yaml_model_load(self.variant)
+            cfg["stage_configs"] = [
+                {"channels": c, "depth": d, "stride": s, "expand": e}
+                for c, d, s, e in cfg["stage_configs"]
+            ]
+        self.cfg = cfg
+        self.yaml = cfg
 
         self._build_backbone(ch)
         self._build_neck()

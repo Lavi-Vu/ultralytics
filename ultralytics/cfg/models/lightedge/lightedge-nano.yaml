@@ -1,0 +1,18 @@
+# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
+# LightEdge-YOLO Nano: lightweight NMS-free object detection model
+# Model docs: https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/LIGHTEDGE_README.md
+
+# Parameters
+nc: 80 # number of classes
+stem_channels: 16
+bifpn_channels: 96
+head_hidden: 64
+
+# Backbone stages
+# each stage: [channels, depth, stride, expand]
+stage_configs:
+  - [32,  2, 2, 2]  # P2/4
+  - [64,  3, 2, 2]  # P3/8
+  - [128, 4, 2, 2]  # P4/16
+  - [256, 2, 2, 2]  # P5/32
