@@ -444,6 +444,7 @@ class LightEdgeDecoder(nn.Module):
                  head_hidden: int = 48, ch_list: list[int] | None = None):
         super().__init__()
         self.nc = nc
+        self.reg_max = 1
         if ch_list is None:
             ch_list = [bifpn_channels] * 3
         self.bifpn = AdaptiveBiFPN(ch_list, bifpn_channels)
@@ -454,7 +455,10 @@ class LightEdgeDecoder(nn.Module):
 
     def forward(self, x: list[torch.Tensor]) -> dict | torch.Tensor | tuple:
         feats = self.bifpn(x)
+        self.head.export = self.export
         out = self.head(feats)
+        if self.export:
+            return out
         if isinstance(out, dict):
             out["head"] = self.head
         elif isinstance(out, tuple) and len(out) == 2:
