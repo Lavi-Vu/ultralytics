@@ -422,6 +422,58 @@ class LightEdgeHead(nn.Module):
         return self
 
 
+class LightEdgeDecoder(nn.Module):
+    """Combined AdaptiveBiFPN + LightEdge Head for seq model integration.
+
+    Serves as the final layer of a YOLO-style sequential model built by
+    ``parse_model``. Takes the three backbone feature levels (P3/P4/P5),
+    refines them through ``AdaptiveBiFPN``, then produces detection predictions
+    via ``LightEdgeHead``.
+    """
+
+    dynamic = False
+    export = False
+    max_det = 300
+    shape = None
+    anchors = torch.empty(0)
+    strides = torch.empty(0)
+    end2end = True
+    legacy = False
+
+    def __init__(self, nc: int = 80, bifpn_channels: int = 64,
+                 head_hidden: int = 48, ch_list: list[int] | None = None):
+        super().__init__()
+        self.nc = nc
+        if ch_list is None:
+            ch_list = [bifpn_channels] * 3
+        self.bifpn = AdaptiveBiFPN(ch_list, bifpn_channels)
+        self.head = LightEdgeHead(nc=nc, ch=(bifpn_channels,) * 3,
+                                  hidden=head_hidden)
+        self.stride = torch.tensor([8.0, 16.0, 32.0])
+        self.head.stride = self.stride
+
+    def forward(self, x: list[torch.Tensor]) -> dict | torch.Tensor | tuple:
+        feats = self.bifpn(x)
+        out = self.head(feats)
+        if isinstance(out, dict):
+            out["head"] = self.head
+        elif isinstance(out, tuple) and len(out) == 2:
+            out[1]["head"] = self.head
+        return out
+
+    def bias_init(self):
+        self.head.bias_init()
+
+    def fuse(self):
+        self.head.fuse()
+
+    def _apply(self, fn):
+        self = super()._apply(fn)
+        self.anchors = fn(self.anchors)
+        self.strides = fn(self.strides)
+        return self
+
+
 # ---------------------------------------------------------------------------
 # Anchor utilities (standalone helpers for clean head implementation)
 # ---------------------------------------------------------------------------

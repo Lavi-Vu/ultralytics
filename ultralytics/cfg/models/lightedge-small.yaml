@@ -1,0 +1,24 @@
+# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
+# LightEdge-YOLO Small: lightweight NMS-free object detection model
+# Model docs: https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/LIGHTEDGE_README.md
+
+# Parameters
+nc: 80
+
+# Backbone (4 stages, last 3 output P3/P4/P5)
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, Conv, [24, 3, 2]]           # 0-P1/2
+  - [-1, 1, Conv, [32, 3, 2]]           # 1-P2/4
+  - [-1, 1, RepViTGhostBlock, [32, 2]]
+  - [-1, 1, Conv, [96, 3, 2]]          # 3-P3/8
+  - [-1, 3, RepViTGhostBlock, [96, 2]]
+  - [-1, 1, Conv, [192, 3, 2]]         # 5-P4/16
+  - [-1, 4, RepViTGhostBlock, [192, 2]]
+  - [-1, 1, Conv, [256, 3, 2]]         # 7-P5/32
+  - [-1, 2, RepViTGhostBlock, [256, 2]]
+
+# Head (Adaptive BiFPN neck + NMS-free decoupled detection head)
+head:
+  - [[4, 6, 8], 1, LightEdgeDecoder, [nc, 128, 80]]

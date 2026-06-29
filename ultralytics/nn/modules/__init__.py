@@ -100,6 +100,7 @@ from .lightedge import (
     CoordAtt,
     ECA,
     GIoULoss,
+    LightEdgeDecoder,
     LightEdgeHead,
     LightEdgeLoss,
     LightEdgeYOLO,

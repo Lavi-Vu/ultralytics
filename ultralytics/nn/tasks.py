@@ -54,6 +54,8 @@ from ultralytics.nn.modules import (
     HGStem,
     ImagePoolingAttn,
     Index,
+    LightEdgeDecoder,
+    LightEdgeLoss,
     LRPCHead,
     Pose,
     Pose26,
@@ -61,6 +63,7 @@ from ultralytics.nn.modules import (
     RepConv,
     RepNCSPELAN4,
     RepVGGDW,
+    RepViTGhostBlock,
     ResNetLayer,
     RTDETRDecoder,
     SCDown,
@@ -528,6 +531,41 @@ class DetectionModel(BaseModel):
     def init_criterion(self):
         """Initialize the loss criterion for the DetectionModel."""
         return E2ELoss(self) if getattr(self, "end2end", False) else v8DetectionLoss(self)
+
+
+class LightEdgeDetectionModel(DetectionModel):
+    """LightEdge-YOLO detection model for YAML pipeline integration.
+
+    Wraps ``LightEdgeDecoder`` as the final layer; uses ``LightEdgeLoss``
+    as the criterion and properly initializes BiFPN + LightEdge Head strides.
+    """
+
+    def __init__(self, cfg="lightedge-nano.yaml", ch=3, nc=None, verbose=True):
+        super().__init__(cfg=cfg, ch=ch, nc=nc, verbose=verbose)
+        m = self.model[-1]
+        if isinstance(m, LightEdgeDecoder):
+            self.stride = m.stride
+            self.model.train()
+            m.bias_init()
+
+    def init_criterion(self):
+        """Use LightEdgeLoss instead of v8DetectionLoss."""
+        nc = self.yaml.get("nc", self.model[-1].nc) if hasattr(self, "yaml") else self.model[-1].nc
+        return LightEdgeLoss(nc=nc)
+
+    def loss(self, batch, preds=None):
+        """Compute loss.
+
+        Unpacks the (pred_tensor, pred_dict) tuple from the decoder before
+        passing to the criterion — mirrors LightEdgeYOLO.loss().
+        """
+        if getattr(self, "criterion", None) is None:
+            self.criterion = self.init_criterion()
+        if preds is None:
+            preds = self.forward(batch["img"])
+        if isinstance(preds, tuple) and len(preds) == 2:
+            preds = preds[1]
+        return self.criterion(preds, batch)
 
 
 class OBBModel(DetectionModel):
@@ -1846,6 +1884,7 @@ def parse_model(d, ch, verbose=True):
             SCDown,
             C2fCIB,
             A2C2f,
+            RepViTGhostBlock,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1947,6 +1986,8 @@ def parse_model(d, ch, verbose=True):
             args.insert(1, [ch[x] for x in f])  # channels as second arg
         elif m is RTDETRDecoder:  # special case, channels arg must be passed in index 1
             args.insert(1, [ch[x] for x in f])
+        elif m is LightEdgeDecoder:
+            args.append([ch[x] for x in f])
         elif m is CBLinear:
             c2 = args[0]
             c1 = ch[f]

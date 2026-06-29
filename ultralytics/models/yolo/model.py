@@ -14,6 +14,7 @@ from ultralytics.models import yolo
 from ultralytics.nn.tasks import (
     ClassificationModel,
     DetectionModel,
+    LightEdgeDetectionModel,
     OBBModel,
     PoseModel,
     SegmentationModel,
@@ -72,6 +73,10 @@ class YOLO(Model):
             self.__dict__ = new_instance.__dict__
         elif "yoloe" in path.stem and path.suffix in {".pt", ".yaml", ".yml"}:  # if YOLOE PyTorch model
             new_instance = YOLOE(path, task=task, verbose=verbose)
+            self.__class__ = type(new_instance)
+            self.__dict__ = new_instance.__dict__
+        elif "lightedge" in path.stem and path.suffix in {".yaml", ".yml"}:
+            new_instance = LightEdgeYOLOModel(path, verbose=verbose)
             self.__class__ = type(new_instance)
             self.__dict__ = new_instance.__dict__
         else:
@@ -439,3 +444,28 @@ class YOLOE(Model):
         self.overrides["agnostic_nms"] = True  # use agnostic nms for YOLOE default
 
         return super().predict(source, stream, **kwargs)
+
+
+class LightEdgeYOLOModel(Model):
+    """LightEdge-YOLO lightweight NMS-free detection model.
+
+    Routes to ``LightEdgeDetectionModel`` via the task map for YAML integration:
+
+        YOLO("lightedge-nano.yaml")   # dispatches to LightEdgeYOLOModel
+    """
+
+    def __init__(self, model: str | Path = "lightedge-nano.yaml", verbose: bool = False) -> None:
+        """Initialize LightEdge-YOLO model with a YAML config."""
+        super().__init__(model=model, task="detect", verbose=verbose)
+
+    @property
+    def task_map(self) -> dict[str, dict[str, Any]]:
+        """Map head to model, trainer, validator, and predictor classes."""
+        return {
+            "detect": {
+                "model": LightEdgeDetectionModel,
+                "validator": yolo.detect.DetectionValidator,
+                "predictor": yolo.detect.DetectionPredictor,
+                "trainer": yolo.detect.DetectionTrainer,
+            }
+        }
