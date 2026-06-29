@@ -363,7 +363,7 @@ class LightEdgeHead(nn.Module):
             return dict()
         bs = x[0].shape[0]
         boxes = torch.cat([
-            bh(f).view(bs, 4, -1) for bh, f in zip(box_head, x)
+            F.softplus(bh(f)).view(bs, 4, -1) for bh, f in zip(box_head, x)
         ], dim=-1)
         scores = torch.cat([
             ch(f).view(bs, self.nc, -1) for ch, f in zip(cls_head, x)
