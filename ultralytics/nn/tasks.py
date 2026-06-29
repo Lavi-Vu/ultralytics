@@ -37,6 +37,7 @@ from ultralytics.nn.modules import (
     C3Ghost,
     C3k2,
     C3x,
+    C3RepViTGhost,
     CBFuse,
     CBLinear,
     Classify,
@@ -47,6 +48,7 @@ from ultralytics.nn.modules import (
     Detect,
     DWConv,
     DWConvTranspose2d,
+    FastBiFusion,
     Focus,
     GhostBottleneck,
     GhostConv,
@@ -54,6 +56,7 @@ from ultralytics.nn.modules import (
     HGStem,
     ImagePoolingAttn,
     Index,
+    LightEdgeDetect,
     LRPCHead,
     Pose,
     Pose26,
@@ -1829,6 +1832,7 @@ def parse_model(d, ch, verbose=True):
             C2,
             C2f,
             C3k2,
+            C3RepViTGhost,
             RepNCSPELAN4,
             ELAN1,
             ADown,
@@ -1855,6 +1859,7 @@ def parse_model(d, ch, verbose=True):
             C2,
             C2f,
             C3k2,
+            C3RepViTGhost,
             C2fAttn,
             C3,
             C3TR,
@@ -1932,13 +1937,17 @@ def parse_model(d, ch, verbose=True):
                 Pose26,
                 OBB,
                 OBB26,
+                LightEdgeDetect,
             }
         ):
             args.extend([reg_max, end2end, [ch[x] for x in f]])
             if m is Segment or m is YOLOESegment or m is Segment26 or m is YOLOESegment26:
                 args[2] = make_divisible(min(args[2], max_channels) * width, 8)
-            if m in {Detect, YOLOEDetect, Segment, Segment26, YOLOESegment, YOLOESegment26, Pose, Pose26, OBB, OBB26}:
+            if m in {Detect, YOLOEDetect, Segment, Segment26, YOLOESegment, YOLOESegment26, Pose, Pose26, OBB, OBB26, LightEdgeDetect}:
                 m.legacy = legacy
+        elif m is FastBiFusion:
+            c2 = make_divisible(min(args[0], max_channels) * width, 8)
+            args = [c2, [ch[x] for x in f]]
         elif m is SemanticSegment:
             args.append([ch[x] for x in f])  # nc, ch tuple
         elif m is v10Detect:
@@ -2061,7 +2070,7 @@ def guess_model_task(model):
                 return "pose"
             elif isinstance(m, OBB):
                 return "obb"
-            elif isinstance(m, (Detect, WorldDetect, YOLOEDetect, v10Detect)):
+            elif isinstance(m, (Detect, WorldDetect, YOLOEDetect, v10Detect, LightEdgeDetect)):
                 return "detect"
 
     # Guess from model filename

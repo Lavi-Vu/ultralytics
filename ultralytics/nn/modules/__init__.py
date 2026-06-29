@@ -17,6 +17,13 @@ Examples:
     >>> subprocess.run(f"onnxslim {f} {f} && open {f}", shell=True, check=True)  # pip install onnxslim
 """
 
+from .lightedge import (
+    C3RepViTGhost,
+    ECA,
+    FastBiFusion,
+    LightEdgeDetect,
+    RepViTGhostBottleneck,
+)
 from .block import (
     C1,
     C2,
@@ -141,6 +148,7 @@ __all__ = (
     "C3x",
     "CBFuse",
     "CBLinear",
+    "C3RepViTGhost",
     "ChannelAttention",
     "Classify",
     "Concat",
@@ -148,11 +156,14 @@ __all__ = (
     "Conv",
     "Conv2",
     "ConvTranspose",
+
     "DWConv",
     "DWConvTranspose2d",
     "DeformableTransformerDecoder",
     "DeformableTransformerDecoderLayer",
     "Detect",
+    "ECA",
+    "FastBiFusion",
     "Focus",
     "GhostBottleneck",
     "GhostConv",
@@ -163,6 +174,7 @@ __all__ = (
     "LRPCHead",
     "LayerNorm2d",
     "LightConv",
+    "LightEdgeDetect",
     "MLPBlock",
     "MSDeformAttn",
     "MaxSigmoidAttnBlock",
@@ -174,6 +186,7 @@ __all__ = (
     "RepConv",
     "RepNCSPELAN4",
     "RepVGGDW",
+    "RepViTGhostBottleneck",
     "ResNetLayer",
     "SCDown",
     "Segment",
