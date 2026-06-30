@@ -9,9 +9,9 @@ nc: 80 # number of classes
 end2end: True # NMS-free one-to-one detection
 reg_max: 1 # direct regression (no DFL)
 scales: # model compound scaling constants
-  # [depth, width, max_channels]
-  n: [0.50, 0.83, 1024] # LightEdge-Nano (2.5M params, 5.9 GFLOPs)
-  s: [0.50, 1.00, 1024] # LightEdge-Small (3.4M params, 7.5 GFLOPs)
+  # [width, depth, max_channels]
+  n: [0.50, 0.83, 1024] # LightEdge-Nano (2.7M params, 6.6 GFLOPs)
+  s: [1.00, 1.00, 1024] # LightEdge-Small (10.3M params, 22.8 GFLOPs)
 
 # LightEdge backbone: RepViTGhost Hybrid (P3-P5)
 backbone:

@@ -134,32 +134,28 @@ class FastBiFusion(nn.Module):
         return self.conv(y)
 
     def __call__(self, x: list[torch.Tensor]) -> torch.Tensor:
-        """Support both list and multiple tensor inputs."""
+        """Support both list and single tensor inputs by duplicating for fusion."""
         if isinstance(x, (list, tuple)):
             return self.forward(x)
         return self.forward([x, x])
 
 
 class LightEdgeDetect(Detect):
-    """LightEdge detection head with reduced head channels and direct regression.
+    """LightEdge detection head with improved head dimensions and joint backbone training.
 
-    Extends Detect with lighter decoupled heads optimized for edge deployment,
-    supporting 3 detection levels (P3-P5) with one-to-one label assignment.
-
-    Attributes:
-        nc (int): Number of classes.
-        nl (int): Number of detection layers (3 for P3-P5).
-        reg_max (int): Direct regression (reg_max=1, no DFL).
-        cv2 (nn.ModuleList): Lightweight box regression heads.
-        cv3 (nn.ModuleList): Lightweight classification heads.
-        dfl (nn.Identity): Identity module (no DFL needed).
+    Key improvements over base Detect:
+      - Larger head dimensions (c2 >= 24) for accurate direct box regression (no DFL)
+      - No feature detachment for one2one head (backbone trains on both branches)
+      - Softplus on ltrb predictions to prevent invalid negative distances
+      - NMS-free post-processing (top-k only) for export; NMS applied by validator during eval
     """
 
     def __init__(self, nc: int = 80, reg_max: int = 1, end2end: bool = True, ch: tuple = ()):
-        """Initialize LightEdgeDetect with lighter decoupled heads."""
+        """Initialize LightEdgeDetect with improved head capacity for direct regression."""
         super().__init__(nc, reg_max, end2end, ch)
-        c2 = max(8, ch[0] // 8, self.reg_max * 4)
-        c3 = max(16, ch[0] // 4, min(self.nc, 64))
+        # Larger head dimensions: c2 >= 24 for box, c3 >= ch[0]//2 for cls
+        c2 = max(24, ch[0] // 4, self.reg_max * 4)
+        c3 = max(ch[0] // 2, min(self.nc, 80))
         self.cv2 = nn.ModuleList(
             nn.Sequential(Conv(x, c2, 3), Conv(c2, c2, 3), nn.Conv2d(c2, 4 * self.reg_max, 1)) for x in ch
         )
@@ -172,10 +168,37 @@ class LightEdgeDetect(Detect):
             for x in ch
         )
         self.dfl = nn.Identity()
-
         if end2end:
             self.one2one_cv2 = copy.deepcopy(self.cv2)
             self.one2one_cv3 = copy.deepcopy(self.cv3)
+
+    def forward_head(
+        self, x: list[torch.Tensor], box_head: torch.nn.Module = None, cls_head: torch.nn.Module = None
+    ) -> dict[str, torch.Tensor]:
+        """Apply softplus to box predictions for stable training (no negative ltrb)."""
+        if box_head is None or cls_head is None:
+            return dict()
+        bs = x[0].shape[0]
+        boxes = torch.cat(
+            [F.softplus(box_head[i](x[i])).view(bs, 4 * self.reg_max, -1) for i in range(self.nl)], dim=-1
+        )
+        scores = torch.cat([cls_head[i](x[i]).view(bs, self.nc, -1) for i in range(self.nl)], dim=-1)
+        return dict(boxes=boxes, scores=scores, feats=x)
+
+    def forward(
+        self, x: list[torch.Tensor]
+    ) -> dict[str, torch.Tensor] | torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Forward without feature detachment for one2one — backbone trains on both branches."""
+        preds = self.forward_head(x, **self.one2many)
+        if self.end2end:
+            one2one = self.forward_head(x, **self.one2one)
+            preds = {"one2many": preds, "one2one": one2one}
+        if self.training:
+            return preds
+        y = self._inference(preds["one2one"] if self.end2end else preds)
+        if self.end2end:
+            y = self.postprocess(y.permute(0, 2, 1))
+        return y if self.export else (y, preds)
 
     def bias_init(self):
         """Initialize biases with improved prior for high-res P2 features."""
