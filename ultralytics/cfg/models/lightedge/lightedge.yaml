@@ -18,10 +18,10 @@ backbone:
   # [from, repeats, module, args]
   - [-1, 1, Conv, [32, 3, 2]]         # 0-P1/2
   - [-1, 1, Conv, [64, 3, 2]]         # 1-P2/4
-  # C3RepViTGhost args: [c2, shortcut, e] (n is inserted by parse_model.repeat_modules)
-  - [-1, 1, C3RepViTGhost, [64, False, 0.25]]   # 2-P2 feat (light, high-res)
+  # C3RepViTGhost args: [c2, shortcut, e] (n inserted by parse_model.repeat_modules)
+  - [-1, 2, C3RepViTGhost, [64, True, 0.5]]     # 2-P2 feat (2 btls, shortcut, e=0.5)
   - [-1, 1, Conv, [64, 3, 2]]         # 3-P3/8
-  - [-1, 2, C3RepViTGhost, [128, False, 0.25]]  # 4-P3 feat
+  - [-1, 2, C3RepViTGhost, [128, True, 0.5]]    # 4-P3 feat (2 btls, shortcut, e=0.5)
   - [-1, 1, Conv, [128, 3, 2]]        # 5-P4/16
   - [-1, 2, C3RepViTGhost, [256, True]]         # 6-P4 feat
   - [-1, 1, Conv, [256, 3, 2]]        # 7-P5/32
