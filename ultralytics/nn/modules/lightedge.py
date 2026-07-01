@@ -5,9 +5,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ultralytics.utils.loss import v8DetectionLoss, E2ELoss
-from ultralytics.utils.tal import TaskAlignedAssigner
-
 from .conv import Conv, DWConv, GhostConv
 from .block import C2f
 from .head import Detect
@@ -154,8 +151,7 @@ class LightEdgeDetect(Detect):
     def __init__(self, nc: int = 80, reg_max: int = 1, end2end: bool = True, ch: tuple = ()):
         """Initialize LightEdgeDetect with improved head capacity for direct regression."""
         super().__init__(nc, reg_max, end2end, ch)
-        # Larger head dimensions: c2 >= 24 for box, c3 >= ch[0]//2 for cls
-        c2 = max(24, ch[0] // 4, self.reg_max * 4)
+        c2 = max(24, ch[0] // 6, min(self.reg_max * 4, 24))
         c3 = max(ch[0] // 2, min(self.nc, 80))
         self.cv2 = nn.ModuleList(
             nn.Sequential(Conv(x, c2, 3), Conv(c2, c2, 3), nn.Conv2d(c2, 4 * self.reg_max, 1)) for x in ch
@@ -168,7 +164,8 @@ class LightEdgeDetect(Detect):
             )
             for x in ch
         )
-        self.dfl = nn.Identity()
+        if self.reg_max <= 1:
+            self.dfl = nn.Identity()
         if end2end:
             self.one2one_cv2 = copy.deepcopy(self.cv2)
             self.one2one_cv3 = copy.deepcopy(self.cv3)
@@ -210,69 +207,3 @@ class LightEdgeDetect(Detect):
             for i, (a, b) in enumerate(zip(self.one2one["box_head"], self.one2one["cls_head"])):
                 a[-1].bias.data[:] = 2.0
                 b[-1].bias.data[: self.nc] = math.log(5 / self.nc / (640 / self.stride[i]) ** 2)
-
-
-# ---------------------------------------------------------------------------
-# Custom loss with better matching for direct regression (reg_max=1)
-# ---------------------------------------------------------------------------
-# TaskAlignedAssigner with beta=6.0 kills gradient for direct regression:
-#   IoU~0.02 → 0.02^6 ≈ 6e-11 → top-k selection is random.
-# Fix: beta=1.0 + additive center-distance prior gives meaningful signal
-# from step 1, enabling all 96 head params to receive non-zero gradients.
-# ---------------------------------------------------------------------------
-
-
-class LightEdgeDetectionLoss(v8DetectionLoss):
-    """Detection loss with center-distance prior and lower beta for direct regression.
-
-    The standard TaskAlignedAssigner uses ``cls^0.5 * IoU^6``, which underflows
-    for ``reg_max=1`` models where initial IoU averages ~0.02. This version
-    replaces the assigner with one that uses ``beta=1.0`` and adds a Gaussian
-    center-distance prior so that anchors near the GT center get non-zero
-    alignment even when IoU is near zero.
-    """
-
-    def __init__(self, model, tal_topk=10, tal_topk2=None):
-        super().__init__(model, tal_topk, tal_topk2)
-        self.assigner = LightEdgeTaskAlignedAssigner(
-            topk=tal_topk,
-            num_classes=self.nc,
-            alpha=0.5,
-            beta=1.0,
-            stride=list(model.model[-1].stride.cpu().numpy()) if hasattr(model.model[-1], "stride") else [8, 16, 32],
-        )
-
-
-class LightEdgeTaskAlignedAssigner(TaskAlignedAssigner):
-    """Assigner with lower beta (1.0 vs 6.0) for direct regression (reg_max=1).
-
-    With ``beta=6.0`` and initial IoU ~0.02, ``IoU^6 ≈ 6e-11`` — alignment is
-    essentially zero and top-k selection is random. ``beta=1.0`` gives
-    ``cls^0.5 * IoU``, which retains meaningful signal at initialization and
-    enables all head params to receive non-zero gradients from step 1.
-    """
-
-    def get_box_metrics(self, pd_scores, pd_bboxes, gt_labels, gt_bboxes, mask_gt):
-        na = pd_bboxes.shape[-2]
-        mask_gt = mask_gt.bool()
-        overlaps = torch.zeros([self.bs, self.n_max_boxes, na], dtype=pd_bboxes.dtype, device=pd_bboxes.device)
-        bbox_scores = torch.zeros([self.bs, self.n_max_boxes, na], dtype=pd_scores.dtype, device=pd_scores.device)
-
-        ind = torch.zeros([2, self.bs, self.n_max_boxes], dtype=torch.long, device=pd_bboxes.device)
-        ind[0] = torch.arange(end=self.bs, device=pd_bboxes.device).view(-1, 1).expand(-1, self.n_max_boxes)
-        ind[1] = gt_labels.squeeze(-1)
-        bbox_scores[mask_gt] = pd_scores[ind[0], :, ind[1]][mask_gt]
-
-        pd_boxes = pd_bboxes.unsqueeze(1).expand(-1, self.n_max_boxes, -1, -1)[mask_gt]
-        gt_boxes = gt_bboxes.unsqueeze(2).expand(-1, -1, na, -1)[mask_gt]
-        overlaps[mask_gt] = self.iou_calculation(gt_boxes, pd_boxes)
-
-        align_metric = bbox_scores.pow(self.alpha) * overlaps.pow(self.beta)
-        return align_metric, overlaps
-
-
-class LightEdgeE2ELoss(E2ELoss):
-    """E2E loss using LightEdgeDetectionLoss for proper direct-regression matching."""
-
-    def __init__(self, model):
-        super().__init__(model, loss_fn=LightEdgeDetectionLoss)

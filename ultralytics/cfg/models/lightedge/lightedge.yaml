@@ -7,10 +7,10 @@
 # Parameters
 nc: 80 # number of classes
 end2end: True # NMS-free one-to-one detection
-reg_max: 1 # direct regression (no DFL)
+reg_max: 16 # DFL for precise box regression
 scales: # model compound scaling constants
-  # [width, depth, max_channels]
-  n: [0.50, 0.83, 1024] # LightEdge-Nano (2.7M params, 6.6 GFLOPs)
+  # [depth, width, max_channels]
+  n: [0.83, 0.80, 1024] # LightEdge-Nano (2.58M params, 6.6 GFLOPs)
   s: [1.00, 1.00, 1024] # LightEdge-Small (10.3M params, 22.8 GFLOPs)
 
 # LightEdge backbone: RepViTGhost Hybrid (P3-P5)
@@ -18,6 +18,7 @@ backbone:
   # [from, repeats, module, args]
   - [-1, 1, Conv, [32, 3, 2]]         # 0-P1/2
   - [-1, 1, Conv, [64, 3, 2]]         # 1-P2/4
+  # C3RepViTGhost args: [c2, shortcut, e] (n is inserted by parse_model.repeat_modules)
   - [-1, 1, C3RepViTGhost, [64, False, 0.25]]   # 2-P2 feat (light, high-res)
   - [-1, 1, Conv, [64, 3, 2]]         # 3-P3/8
   - [-1, 2, C3RepViTGhost, [128, False, 0.25]]  # 4-P3 feat
