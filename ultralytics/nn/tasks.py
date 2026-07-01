@@ -530,6 +530,10 @@ class DetectionModel(BaseModel):
 
     def init_criterion(self):
         """Initialize the loss criterion for the DetectionModel."""
+        m = self.model[-1]
+        if isinstance(m, LightEdgeDetect):
+            from ultralytics.nn.modules.lightedge import LightEdgeE2ELoss
+            return LightEdgeE2ELoss(self)
         return E2ELoss(self) if getattr(self, "end2end", False) else v8DetectionLoss(self)
 
 
