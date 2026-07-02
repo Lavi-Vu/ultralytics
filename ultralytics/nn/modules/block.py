@@ -2202,21 +2202,28 @@ class GDPAttention(nn.Module):
 
     default_act = nn.SiLU()
 
-    def __init__(self, c: int, attn_ratio: float = 0.25, gate_reduction: int = 4):
+    def __init__(
+        self, c: int, attn_ratio: float = 0.5, gate_reduction: int = 4, pool_size: int = 1
+    ):
         """Initialize GDP-Attention module.
 
         Args:
             c (int): Input/output channels.
-            attn_ratio (float): Attention ratio for key dimension. Default 0.25.
+            attn_ratio (float): Attention ratio for key dimension. Default 0.5.
             gate_reduction (int): Gate bottleneck reduction. Default 4.
+            pool_size (int): Spatial pooling factor before attention. Reduces N (=H*W) of the
+                N×N matmul from H*W to (H/pool_size)*(W/pool_size), cutting its cost by ~pool_size^4.
+                E.g. pool_size=4 at H=80: N drops 6400→400, matmul drops 41M→120K elements (340x less).
+                pool_size=1 disables pooling. For H<=40, pool_size=1 is fast enough.
         """
         super().__init__()
         self.c = c
+        self.pool_size = pool_size
         self.head_dim = c // 8  # Fixed 8 heads
         self.key_dim = int(self.head_dim * attn_ratio)  # Smaller key = fewer params
 
-        # Channel gate: lightweight bottleneck
-        self.gate = nn.Sequential(
+        # Channel gate: always produces [B, C, 1, 1] via GAP → [B, C, 1, 1] → [B, C, 1, 1]
+        self.gate_net = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(c, c // gate_reduction, 1),
             nn.SiLU(),
@@ -2243,30 +2250,43 @@ class GDPAttention(nn.Module):
         B, C, H, W = x.shape
         N = H * W
 
-        # Step 1: Channel gating for global context
-        gate = self.gate(x)  # [B, C, 1, 1]
+        # Step 1: Channel gating — always operates at full resolution [B, C, 1, 1]
+        gate = self.gate_net(x)  # [B, C, 1, 1]
 
-        # Step 2: Lightweight QKV
-        qkv = self.qkv(x)  # [B, (2*kd + hd)*8, H, W]
-        qkv = qkv.flatten(2).permute(0, 2, 1)  # [B, N, C']
+        # Step 2: Downsample spatial resolution before QKV (reduces N×N matmul cost dramatically)
+        if self.pool_size > 1:
+            x_attn = F.avg_pool2d(x, kernel_size=self.pool_size, stride=self.pool_size)
+            H2, W2 = x_attn.shape[2:]
+            N2 = H2 * W2
+        else:
+            x_attn, H2, W2, N2 = x, H, W, N
+
+        # Step 3: Lightweight QKV on (potentially pooled) feature map
+        qkv = self.qkv(x_attn)  # [B, (2*kd + hd)*8, H2, W2]
+        qkv = qkv.flatten(2).permute(0, 2, 1)  # [B, N2, C']
 
         q, k, v = qkv.split(
             [self.key_dim * 8, self.key_dim * 8, self.head_dim * 8], dim=2
         )
-        q = q.view(B, N, 8, self.key_dim).transpose(1, 2)  # [B, 8, N, kd]
-        k = k.view(B, N, 8, self.key_dim).transpose(1, 2)  # [B, 8, N, kd]
-        v = v.view(B, N, 8, self.head_dim).transpose(1, 2)  # [B, 8, N, hd]
+        q = q.view(B, N2, 8, self.key_dim).transpose(1, 2)  # [B, 8, N2, kd]
+        k = k.view(B, N2, 8, self.key_dim).transpose(1, 2)  # [B, 8, N2, kd]
+        v = v.view(B, N2, 8, self.head_dim).transpose(1, 2)  # [B, 8, N2, hd]
 
-        # Step 3: Scaled dot-product attention (lighter: smaller kd)
+        # Step 4: Scaled dot-product attention — N is now pool_size^2 smaller
         scale = self.key_dim**-0.5
-        attn = (q * scale) @ k.transpose(-2, -1)  # [B, 8, N, N]
+        attn = (q * scale) @ k.transpose(-2, -1)  # [B, 8, N2, N2]
         attn = attn.softmax(dim=-1)
 
-        # Step 4: Aggregate
-        out = (attn @ v).transpose(1, 2).reshape(B, N, C).permute(0, 2, 1).view(B, C, H, W)
+        # Step 5: Aggregate on pooled map
+        out = (attn @ v).transpose(1, 2).reshape(B, N2, C).permute(0, 2, 1).view(B, C, H2, W2)
+
+        # Step 6: Upsample back to original resolution
+        if self.pool_size > 1:
+            out = F.interpolate(out, size=(H, W), mode="bilinear", align_corners=False)
+
         out = self.proj(out)
 
-        # Step 5: Apply channel gate
+        # Step 7: Apply channel gate [B, C, 1, 1] broadcasts over full-res output
         return out * gate
 
 
@@ -2338,7 +2358,7 @@ class GDP_C3k2(C3k2):
         self.c_out = c2  # output channels for GDPAttention
         if gdp_attn:
             self.gdp = nn.Sequential(
-                GDPAttention(self.c_out, attn_ratio=0.25),
+                GDPAttention(self.c_out, attn_ratio=0.25, pool_size=4),
                 nn.Conv2d(self.c_out, self.c_out, 1),
             )
 
