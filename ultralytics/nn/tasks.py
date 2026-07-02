@@ -28,6 +28,7 @@ from ultralytics.nn.modules import (
     A2C2f,
     AConv,
     ADown,
+    ASFF_Neck,
     Bottleneck,
     BottleneckCSP,
     C2f,
@@ -48,6 +49,9 @@ from ultralytics.nn.modules import (
     DWConv,
     DWConvTranspose2d,
     Focus,
+    GDPAConv,
+    GDPAttention,
+    GDP_C3k2,
     GhostBottleneck,
     GhostConv,
     HGBlock,
@@ -67,6 +71,7 @@ from ultralytics.nn.modules import (
     Segment,
     Segment26,
     SemanticSegment,
+    SPPF_C,
     TorchVision,
     WorldDetect,
     YOLOEDetect,
@@ -1847,6 +1852,11 @@ def parse_model(d, ch, verbose=True):
             SCDown,
             C2fCIB,
             A2C2f,
+            GDPAConv,
+            GDPAttention,
+            GDP_C3k2,
+            SPPF_C,
+            ASFF_Neck,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1866,6 +1876,7 @@ def parse_model(d, ch, verbose=True):
             C2fCIB,
             C2PSA,
             A2C2f,
+            GDP_C3k2,
         }
     )
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
@@ -1885,27 +1896,38 @@ def parse_model(d, ch, verbose=True):
                     args[j] = locals()[a] if a in locals() else ast.literal_eval(a)
         n = n_ = max(round(n * depth), 1) if n > 1 else n  # depth gain
         if m in base_modules:
-            c1, c2 = ch[f], args[0]
-            if c2 != nc:  # if c2 != nc (e.g., Classify() output)
-                c2 = make_divisible(min(c2, max_channels) * width, 8)
-            if m is C2fAttn:  # set 1) embed channels and 2) num heads
-                args[1] = make_divisible(min(args[1], max_channels // 2) * width, 8)
-                args[2] = int(max(round(min(args[2], max_channels // 2 // 32)) * width, 1) if args[2] > 1 else args[2])
-
-            args = [c1, c2, *args[1:]]
-            if m in repeat_modules:
-                args.insert(2, n)  # number of repeats
-                n = 1
-            if m is C3k2:  # for M/L/X sizes
-                legacy = False
-                if scale in "mlx":
-                    args[3] = True
-            if m is A2C2f:
-                legacy = False
-                if scale in "lx":  # for L/X sizes
-                    args.extend((True, 1.2))
-            if m is C2fCIB:
-                legacy = False
+            # ASFF_Neck is a Concat subclass with two inputs; handle specially before generic module logic
+            if m is ASFF_Neck:
+                c2_out = args[0]
+                if c2_out != nc:
+                    c2_out = make_divisible(min(c2_out, max_channels) * width, 8)
+                c1_a, c1_b = ch[f[0]], ch[f[1]]
+                c2 = c2_out
+                args = [c2_out]  # only c2, ASFF_Neck has __init__(c2) only
+            else:
+                c1, c2 = ch[f], args[0]
+                if c2 != nc:  # if c2 != nc (e.g., Classify() output)
+                    c2 = make_divisible(min(c2, max_channels) * width, 8)
+                args = [c1, c2, *args[1:]]
+            if m not in {ASFF_Neck}:
+                if m is C2fAttn:  # set 1) embed channels and 2) num heads
+                    args[1] = make_divisible(min(args[1], max_channels // 2) * width, 8)
+                    args[2] = int(
+                        max(round(min(args[2], max_channels // 2 // 32)) * width, 1) if args[2] > 1 else args[2]
+                    )
+                if m in repeat_modules:
+                    args.insert(2, n)  # number of repeats
+                    n = 1
+                if m is C3k2:  # for M/L/X sizes
+                    legacy = False
+                    if scale in "mlx":
+                        args[3] = True
+                if m is A2C2f:
+                    legacy = False
+                    if scale in "lx":  # for L/X sizes
+                        args.extend((True, 1.2))
+                if m is C2fCIB:
+                    legacy = False
         elif m is AIFI:
             args = [ch[f], *args]
         elif m in frozenset({HGStem, HGBlock}):
