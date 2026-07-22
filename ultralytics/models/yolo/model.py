@@ -15,6 +15,7 @@ from ultralytics.nn.tasks import (
     ClassificationModel,
     DepthModel,
     DetectionModel,
+    LightEdgeDetModel,
     OBBModel,
     PoseModel,
     SegmentationModel,
@@ -97,6 +98,12 @@ class YOLO(Model):
             },
             "detect": {
                 "model": DetectionModel,
+                "trainer": yolo.detect.DetectionTrainer,
+                "validator": yolo.detect.DetectionValidator,
+                "predictor": yolo.detect.DetectionPredictor,
+            },
+            "lightedgedet": {
+                "model": LightEdgeDetModel,
                 "trainer": yolo.detect.DetectionTrainer,
                 "validator": yolo.detect.DetectionValidator,
                 "predictor": yolo.detect.DetectionPredictor,

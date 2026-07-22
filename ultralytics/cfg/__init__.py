@@ -65,6 +65,7 @@ TASK2DATA = {
     "obb": "dota8.yaml",
     "depth": "depth8.yaml",
     "semantic": "cityscapes8.yaml",
+    "lightedgedet": "coco8.yaml",
 }
 TASK2CALIBRATIONDATA = {
     "detect": "coco128.yaml",
@@ -74,6 +75,7 @@ TASK2CALIBRATIONDATA = {
     "obb": "dota128.yaml",
     "depth": "depth8.yaml",
     "semantic": "cityscapes8.yaml",
+    "lightedgedet": "coco128.yaml",
 }
 TASK2MODEL = {
     "detect": "yolo26n.pt",
@@ -83,6 +85,7 @@ TASK2MODEL = {
     "obb": "yolo26n-obb.pt",
     "depth": "yolo26n-depth.pt",
     "semantic": "yolo26n-sem.pt",
+    "lightedgedet": "lightedgedet_nano.yaml",
 }
 TASK2METRIC = {
     "detect": "metrics/mAP50-95(B)",

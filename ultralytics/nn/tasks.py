@@ -75,6 +75,12 @@ from ultralytics.nn.modules import (
     YOLOESegment26,
     v10Detect,
 )
+from ultralytics.nn.modules.lightedgedet import (
+    HybridBackbone,
+    LiteBlock,
+    LitePAFPN,
+    MViTBlock,
+)
 from ultralytics.utils import (
     DEFAULT_CFG_DICT,
     LOGGER,
@@ -1025,6 +1031,121 @@ class RTDETRDetectionModel(DetectionModel):
         head = self.model[-1]
         x = head([y[j] for j in head.f], batch)  # head inference
         return x
+
+
+class LightEdgeDetModel(BaseModel):
+    """LightEdgeDet: lightweight CNN+Transformer hybrid detector.
+
+    Builds backbone, neck and head from a YAML config dict instead of the
+    standard parse_model layer list.  The Detect head is ultralytics-native
+    so v8DetectionLoss works out-of-the-box.
+    """
+
+    def __init__(self, cfg="lightedgedet_nano.yaml", ch=3, nc=None, verbose=True):
+        import ast as _ast
+        from types import SimpleNamespace
+
+        torch.nn.Module.__init__(self)
+
+        if isinstance(cfg, (str, Path)):
+            d = YAML.load(check_yaml(cfg))
+        else:
+            d = cfg.copy()
+
+        # ---- hyper-parameters ----
+        nc = nc or d.get("nc", 80)
+        reg_max = int(d.get("reg_max", 16))
+        strides = d.get("strides", [8, 16, 32, 64])
+        neck_out = int(d.get("neck_out_channels", 64))
+
+        # ---- backbone ----
+        self.backbone = HybridBackbone(
+            c1=ch,
+            c2=0,  # unused
+            channels_list=str(d.get("backbone_channels", "[24,48,96,144,192]"))
+            if isinstance(d.get("backbone_channels"), list) else str(d.get("backbone_channels", "[24,48,96,144,192]")),
+            depths=str(d.get("backbone_depths", "[2,3,4,3,2]"))
+            if isinstance(d.get("backbone_depths"), list) else str(d.get("backbone_depths", "[2,3,4,3,2]")),
+            expand_ratios=str(d.get("backbone_expand_ratios", "[4.0,4.0,4.0,4.0,4.0]"))
+            if isinstance(d.get("backbone_expand_ratios"), list) else str(d.get("backbone_expand_ratios", "[4.0,4.0,4.0,4.0,4.0]")),
+            se_ratios=str(d.get("backbone_se_ratios", "[0.25,0.25,0.25,0.25,0.25]"))
+            if isinstance(d.get("backbone_se_ratios"), list) else str(d.get("backbone_se_ratios", "[0.25,0.25,0.25,0.25,0.25]")),
+            attn_stages=str(d.get("backbone_attn_stages", "[0,0,0,1,1]"))
+            if isinstance(d.get("backbone_attn_stages"), list) else str(d.get("backbone_attn_stages", "[0,0,0,1,1]")),
+            stem_channels=int(d.get("backbone_stem_channels", 16)),
+            drop_path_rate=float(d.get("backbone_drop_path_rate", 0.1)),
+        )
+
+        # ---- neck ----
+        self.neck = LitePAFPN(
+            c1=1,  # dummy; real input channels inferred lazily
+            c2=neck_out,
+            num_blocks=int(d.get("neck_num_blocks", 2)),
+        )
+
+        # ---- head (ultralytics Detect for loss compatibility) ----
+        num_levels = len(strides)
+        self.detect = Detect(nc=nc, reg_max=reg_max, ch=(neck_out,) * num_levels)
+
+        # Wrap in self.model so model.model[-1] == Detect (required by v8DetectionLoss init)
+        self.model = nn.Sequential()
+        self.model.add_module("detect", self.detect)
+
+        # ---- attributes required by ultralytics trainer / loss ----
+        self.stride = self.detect.stride
+        self.nc = nc
+        self.reg_max = reg_max
+        self.save = []
+        self.yaml = d
+        self.yaml_file = ""
+        self.args = SimpleNamespace(
+            task="detect",
+            mode="train",
+            lr0=d.get("lr0", 0.01),
+            lrf=d.get("lrf", 0.01),
+            momentum=d.get("momentum", 0.937),
+            weight_decay=d.get("weight_decay", 0.0005),
+            warmup_epochs=d.get("warmup_epochs", 3.0),
+            warmup_momentum=d.get("warmup_momentum", 0.8),
+            warmup_bias_lr=d.get("warmup_bias_lr", 0.1),
+            box=d.get("box", 7.5),
+            cls=d.get("cls", 0.5),
+            dfl=d.get("dfl", 1.5),
+            nbs=d.get("nbs", 64),
+            image_weight=d.get("image_weight", 4.0),
+           _hyp=d,
+        )
+
+        if verbose:
+            total_params = sum(p.numel() for p in self.parameters())
+            LOGGER.info(
+                f"LightEdgeDetModel: {total_params / 1e6:.2f}M params, "
+                f"nc={nc}, strides={strides}, neck_ch={neck_out}"
+            )
+
+        # Compute strides via dummy forward (required by Detect)
+        s = 256  # 2x min stride
+        self.detect.inplace = True
+        self.eval()
+        self.detect.training = True
+        with torch.no_grad():
+            dummy = torch.zeros(1, ch, s, s)
+            out = self.predict(dummy)
+            feats = out["feats"]
+        self.detect.stride = torch.tensor([s / f.shape[-2] for f in feats])
+        self.stride = self.detect.stride
+        self.train()
+        self.detect.bias_init()  # only run once
+
+    # ------------------------------------------------------------------
+    def predict(self, x, profile=False, visualize=False, augment=False, embed=None):
+        features = self.backbone(x)
+        features = self.neck(features)
+        return self.detect(features)
+
+    # ------------------------------------------------------------------
+    def init_criterion(self):
+        return v8DetectionLoss(self)
 
 
 class WorldModel(DetectionModel):
@@ -2126,6 +2247,9 @@ def guess_model_task(model):
 
     def cfg2task(cfg):
         """Guess from YAML dictionary."""
+        # LightEdgeDet uses custom YAML format (no standard head list)
+        if "backbone_type" in cfg or "neck_out_channels" in cfg:
+            return "lightedgedet"
         m = cfg["head"][-1][-2].lower()  # output module name
         if m in {"classify", "classifier", "cls", "fc"}:
             return "classify"
@@ -2167,6 +2291,8 @@ def guess_model_task(model):
                 return "obb"
             elif isinstance(m, Depth):
                 return "depth"
+            elif isinstance(m, HybridBackbone):
+                return "lightedgedet"
             elif isinstance(m, (Detect, WorldDetect, YOLOEDetect, v10Detect)):
                 return "detect"
 

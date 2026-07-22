@@ -193,11 +193,17 @@ class DetectionTrainer(BaseTrainer):
             verbose (bool): Whether to display model information.
 
         Returns:
-            (DetectionModel): YOLO detection model.
+            (DetectionModel | LightEdgeDetModel): YOLO detection model.
         """
-        model = self.set_model_names_for_load(
-            DetectionModel(cfg, nc=self.data["nc"], ch=self.data["channels"], verbose=verbose and RANK == -1)
-        )
+        if self.args.task == "lightedgedet":
+            from ultralytics.nn.tasks import LightEdgeDetModel
+            model = self.set_model_names_for_load(
+                LightEdgeDetModel(cfg, nc=self.data["nc"], verbose=verbose and RANK == -1)
+            )
+        else:
+            model = self.set_model_names_for_load(
+                DetectionModel(cfg, nc=self.data["nc"], ch=self.data["channels"], verbose=verbose and RANK == -1)
+            )
         if weights:
             model.load(weights)
         return model
