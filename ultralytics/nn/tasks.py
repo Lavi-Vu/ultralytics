@@ -1057,37 +1057,61 @@ class LightEdgeDetModel(BaseModel):
         nc = nc or d.get("nc", 80)
         reg_max = int(d.get("reg_max", 16))
         strides = d.get("strides", [8, 16, 32, 64])
+        end2end = bool(d.get("end2end", False))
         neck_out = int(d.get("neck_out_channels", 64))
+        head_ch = int(d.get("head_channels", 56))
+        use_sppf = bool(d.get("backbone_use_sppf", True))
+
+        # ---- compound scaling (ultralytics convention: scales[n] = [depth, width, max_ch]) ----
+        depth_mul, width_mul, max_ch = 1.0, 1.0, float("inf")
+        scales = d.get("scales")
+        scale = d.get("scale")
+        if scales:
+            if scale is None:
+                scale = next(iter(scales.keys()))
+            depth_mul, width_mul, max_ch = scales[scale]
+
+        def _scale_list(values, mul):
+            return [max(1, int(round(v * mul))) for v in values]
+
+        def _scale_ch(values, mul):
+            return [int(min(v * mul, max_ch)) for v in values]
+
+        backbone_ch = _scale_ch(d.get("backbone_channels", [24, 48, 96, 144, 192]), width_mul)
+        backbone_dep = _scale_list(d.get("backbone_depths", [2, 3, 4, 3, 2]), depth_mul)
+        stem_ch = max(8, int(min(round(d.get("backbone_stem_channels", 16) * width_mul), max_ch)))
+        neck_out = max(16, int(min(round(neck_out * width_mul), max_ch)))
+        head_ch = max(16, int(min(round(head_ch * width_mul), max_ch)))
 
         # ---- backbone ----
         self.backbone = HybridBackbone(
             c1=ch,
             c2=0,  # unused
-            channels_list=str(d.get("backbone_channels", "[24,48,96,144,192]"))
-            if isinstance(d.get("backbone_channels"), list) else str(d.get("backbone_channels", "[24,48,96,144,192]")),
-            depths=str(d.get("backbone_depths", "[2,3,4,3,2]"))
-            if isinstance(d.get("backbone_depths"), list) else str(d.get("backbone_depths", "[2,3,4,3,2]")),
+            channels_list=str(backbone_ch),
+            depths=str(backbone_dep),
             expand_ratios=str(d.get("backbone_expand_ratios", "[4.0,4.0,4.0,4.0,4.0]"))
             if isinstance(d.get("backbone_expand_ratios"), list) else str(d.get("backbone_expand_ratios", "[4.0,4.0,4.0,4.0,4.0]")),
             se_ratios=str(d.get("backbone_se_ratios", "[0.25,0.25,0.25,0.25,0.25]"))
             if isinstance(d.get("backbone_se_ratios"), list) else str(d.get("backbone_se_ratios", "[0.25,0.25,0.25,0.25,0.25]")),
             attn_stages=str(d.get("backbone_attn_stages", "[0,0,0,1,1]"))
             if isinstance(d.get("backbone_attn_stages"), list) else str(d.get("backbone_attn_stages", "[0,0,0,1,1]")),
-            stem_channels=int(d.get("backbone_stem_channels", 16)),
+            stem_channels=stem_ch,
             drop_path_rate=float(d.get("backbone_drop_path_rate", 0.1)),
+            use_sppf=use_sppf,
         )
 
         # ---- neck ----
         self.neck = LitePAFPN(
             c1=1,  # dummy; real input channels inferred lazily
             c2=neck_out,
-            num_blocks=int(d.get("neck_num_blocks", 2)),
+            num_blocks=max(1, int(round(d.get("neck_num_blocks", 2) * depth_mul))),
         )
 
         # ---- head (light shared decoupled head, ultralytics Detect-compatible) ----
         num_levels = len(strides)
-        head_ch = int(d.get("head_channels", 56))
-        head = LightDetectHead(nc=nc, reg_max=reg_max, ch=(neck_out,) * num_levels, head_channels=head_ch)
+        head = LightDetectHead(
+            nc=nc, reg_max=reg_max, end2end=end2end, ch=(neck_out,) * num_levels, head_channels=head_ch
+        )
 
         # Wrap head in self.model so model.model[-1] == Detect (required by v8DetectionLoss init).
         # The head lives ONLY inside self.model (exposed via the `detect` property) so it appears at
@@ -1102,8 +1126,9 @@ class LightEdgeDetModel(BaseModel):
         self.save = []
         self.yaml = d
         self.yaml_file = ""
+        self.task = "lightedgedet"
         self.args = SimpleNamespace(
-            task="detect",
+            task="lightedgedet",
             mode="train",
             lr0=d.get("lr0", 0.01),
             lrf=d.get("lrf", 0.01),
@@ -1124,7 +1149,7 @@ class LightEdgeDetModel(BaseModel):
             total_params = sum(p.numel() for p in self.parameters())
             LOGGER.info(
                 f"LightEdgeDetModel: {total_params / 1e6:.2f}M params, "
-                f"nc={nc}, strides={strides}, neck_ch={neck_out}"
+                f"nc={nc}, strides={strides}, neck_ch={neck_out}, end2end={end2end}"
             )
 
         # Compute strides via dummy forward (required by Detect)
@@ -1135,6 +1160,8 @@ class LightEdgeDetModel(BaseModel):
         with torch.no_grad():
             dummy = torch.zeros(1, ch, s, s)
             out = self.predict(dummy)
+            if end2end:
+                out = out["one2many"]
             feats = out["feats"]
         self.detect.stride = torch.tensor([s / f.shape[-2] for f in feats])
         self.stride = self.detect.stride
@@ -1146,6 +1173,22 @@ class LightEdgeDetModel(BaseModel):
         """The detection head; lives only inside self.model (single tree position for correct GFLOPs)."""
         return self.model[-1]
 
+    @property
+    def end2end(self):
+        """Whether the model uses end-to-end NMS-free detection."""
+        return getattr(self.model[-1], "end2end", False)
+
+    @end2end.setter
+    def end2end(self, value):
+        """Override the end-to-end detection mode on the head."""
+        self.model[-1].end2end = value
+
+    def set_head_attr(self, **kwargs):
+        """Set attributes of the detection head (last layer), e.g. max_det/agnostic_nms."""
+        head = self.model[-1]
+        for k, v in kwargs.items():
+            setattr(head, k, v)
+
     # ------------------------------------------------------------------
     def predict(self, x, profile=False, visualize=False, augment=False, embed=None):
         features = self.backbone(x)
@@ -1154,7 +1197,7 @@ class LightEdgeDetModel(BaseModel):
 
     # ------------------------------------------------------------------
     def init_criterion(self):
-        return v8DetectionLoss(self)
+        return E2ELoss(self) if self.end2end else v8DetectionLoss(self)
 
 
 class WorldModel(DetectionModel):

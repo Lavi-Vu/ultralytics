@@ -6,6 +6,7 @@ compatible modules.  Each module's __init__ follows the (c1, c2, ...) convention
 expected by parse_model so it plugs directly into a YAML model definition.
 """
 
+import copy
 import math
 from typing import List
 
@@ -13,7 +14,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ultralytics.nn.modules.block import DFL
+from ultralytics.nn.modules.block import DFL, SPPF
 from ultralytics.nn.modules.conv import Conv, DWConv
 from ultralytics.nn.modules.head import Detect
 
@@ -176,6 +177,7 @@ class HybridBackbone(nn.Module):
         attn_stages: str = "[0,0,0,1,1]",
         stem_channels: int = 16,
         drop_path_rate: float = 0.1,
+        use_sppf: bool = True,
     ):
         super().__init__()
         import ast as _ast
@@ -220,6 +222,10 @@ class HybridBackbone(nn.Module):
         self.out_indices = [1, 2, 3, 4]
         self.channels_list = channels_list
 
+        # Global-context SPPF on the deepest stage (P6) — cheap multi-scale pooling
+        # that flows into every neck level via the FPN top-down path.
+        self.sppf = SPPF(channels_list[-1], channels_list[-1], k=5) if use_sppf else nn.Identity()
+
     def forward(self, x):
         features = []
         x = self.stem(x)
@@ -227,6 +233,8 @@ class HybridBackbone(nn.Module):
             x = stage(x)
             if idx in self.out_indices:
                 features.append(x)
+        if isinstance(self.sppf, SPPF):
+            features[-1] = self.sppf(features[-1])
         return features
 
 
@@ -332,8 +340,11 @@ class LightDetectHead(Detect):
     validation, and export all work unchanged.
     """
 
-    def __init__(self, nc: int = 80, reg_max=16, ch: tuple = (), head_channels: int = 56):
+    def __init__(self, nc: int = 80, reg_max=16, end2end=False, ch: tuple = (), head_channels: int = 56):
+        # NOTE: super() is called with end2end=False so it does NOT deepcopy the default
+        # per-level cv2/cv3 it would build before we replace them with our shared branches.
         super().__init__(nc=nc, reg_max=reg_max, end2end=False, ch=ch)
+        self._end2end = bool(end2end)
         c, c2 = ch[0], head_channels
         self.head_channels = c2
 
@@ -362,10 +373,17 @@ class LightDetectHead(Detect):
         self.cv2 = nn.ModuleList([shared_reg])
         self.cv3 = nn.ModuleList([shared_cls])
 
+        if self._end2end:
+            # One-to-one (E2E) branches, detached in Detect.forward; same shared design.
+            self.one2one_cv2 = copy.deepcopy(self.cv2)
+            self.one2one_cv3 = copy.deepcopy(self.cv3)
+
     def forward_head(
         self, x: list[torch.Tensor], box_head: torch.nn.Module = None, cls_head: torch.nn.Module = None
     ) -> dict[str, torch.Tensor]:
         """Channel-reduce each level, then apply the shared reg/cls branches."""
+        if box_head is None or cls_head is None:  # fused inference (one2many removed)
+            return dict()
         reduced = [self.reduce[i](xi) for i, xi in enumerate(x)]
         bs = x[0].shape[0]
         boxes = torch.cat(
@@ -380,7 +398,13 @@ class LightDetectHead(Detect):
 
     def bias_init(self):
         """Initialize the shared head with a focal-loss prior (single value, no per-level split)."""
-        reg_last = self.cv2[0][-1]
-        cls_last = self.cv3[0][-1]
-        reg_last.bias.data[:] = 2.0  # box
-        cls_last.bias.data[: self.nc] = math.log(5 / self.nc / (640 / self.stride[0]) ** 2)
+
+        def _init(box_head, cls_head):
+            reg_last = box_head[0][-1]
+            cls_last = cls_head[0][-1]
+            reg_last.bias.data[:] = 2.0  # box
+            cls_last.bias.data[: self.nc] = math.log(5 / self.nc / (640 / self.stride[0]) ** 2)
+
+        _init(self.cv2, self.cv3)
+        if self._end2end:
+            _init(self.one2one_cv2, self.one2one_cv3)
