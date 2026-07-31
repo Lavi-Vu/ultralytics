@@ -20,6 +20,7 @@ neck_num_blocks: 2
 
 # Detect head
 reg_max: 16
+head_channels: 56
 strides: [8, 16, 32, 64]
 
 # Training defaults (ultralytics trainer reads these from here as fallback)

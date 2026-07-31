@@ -13,6 +13,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ultralytics.nn.modules.block import DFL
+from ultralytics.nn.modules.conv import Conv, DWConv
+from ultralytics.nn.modules.head import Detect
+
 
 # ---------------------------------------------------------------------------
 #  Small helpers
@@ -312,3 +316,71 @@ class LitePAFPN(nn.Module):
             outputs.append(self.pan_convs[i](laterals[i] + down))
 
         return outputs
+
+
+class LightDetectHead(Detect):
+    """Lightweight decoupled detection head for LightEdgeDet.
+
+    Drops Detect's per-level 3x3 conv stacks in favor of a shared, depthwise-
+    separable decoupled head (matching the original LightEdgeDet design):
+
+    - per-level 1x1 channel reduce (neck -> head_channels)
+    - ONE shared reg branch and ONE shared cls branch applied to every level
+    - branches are depthwise + pointwise convs (cheap, no dense 3x3)
+
+    Shares Detect's forward/forward_head/_inference machinery, so v8DetectionLoss,
+    validation, and export all work unchanged.
+    """
+
+    def __init__(self, nc: int = 80, reg_max=16, ch: tuple = (), head_channels: int = 56):
+        super().__init__(nc=nc, reg_max=reg_max, end2end=False, ch=ch)
+        c, c2 = ch[0], head_channels
+        self.head_channels = c2
+
+        # Per-level 1x1 channel reduce (neck -> head_channels), identity if already aligned.
+        self.reduce = nn.ModuleList(
+            nn.Sequential(nn.Conv2d(ci, c2, 1, bias=False), nn.BatchNorm2d(c2), nn.SiLU(inplace=True))
+            if ci != c2
+            else nn.Identity()
+            for ci in ch
+        )
+
+        # Single shared branches (depthwise-separable), applied to every level.
+        # cv2/cv3 are length-1 ModuleLists: ultralytics iterates them per level, but the
+        # SAME module runs on every level. Keeping one entry (not nl copies of the same
+        # object) stops thop/GFLOPs from counting the shared convs nl times.
+        shared_reg = nn.Sequential(
+            nn.Sequential(DWConv(c2, c2, 3), Conv(c2, c2, 1)),
+            nn.Sequential(DWConv(c2, c2, 3), Conv(c2, c2, 1)),
+            nn.Conv2d(c2, 4 * self.reg_max, 1),
+        )
+        shared_cls = nn.Sequential(
+            nn.Sequential(DWConv(c2, c2, 3), Conv(c2, c2, 1)),
+            nn.Sequential(DWConv(c2, c2, 3), Conv(c2, c2, 1)),
+            nn.Conv2d(c2, self.nc, 1),
+        )
+        self.cv2 = nn.ModuleList([shared_reg])
+        self.cv3 = nn.ModuleList([shared_cls])
+
+    def forward_head(
+        self, x: list[torch.Tensor], box_head: torch.nn.Module = None, cls_head: torch.nn.Module = None
+    ) -> dict[str, torch.Tensor]:
+        """Channel-reduce each level, then apply the shared reg/cls branches."""
+        reduced = [self.reduce[i](xi) for i, xi in enumerate(x)]
+        bs = x[0].shape[0]
+        boxes = torch.cat(
+            [box_head[i if len(box_head) > 1 else 0](reduced[i]).view(bs, 4 * self.reg_max, -1) for i in range(self.nl)],
+            dim=-1,
+        )
+        scores = torch.cat(
+            [cls_head[i if len(cls_head) > 1 else 0](reduced[i]).view(bs, self.nc, -1) for i in range(self.nl)],
+            dim=-1,
+        )
+        return dict(boxes=boxes, scores=scores, feats=x)
+
+    def bias_init(self):
+        """Initialize the shared head with a focal-loss prior (single value, no per-level split)."""
+        reg_last = self.cv2[0][-1]
+        cls_last = self.cv3[0][-1]
+        reg_last.bias.data[:] = 2.0  # box
+        cls_last.bias.data[: self.nc] = math.log(5 / self.nc / (640 / self.stride[0]) ** 2)

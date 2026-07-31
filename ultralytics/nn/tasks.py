@@ -77,6 +77,7 @@ from ultralytics.nn.modules import (
 )
 from ultralytics.nn.modules.lightedgedet import (
     HybridBackbone,
+    LightDetectHead,
     LiteBlock,
     LitePAFPN,
     MViTBlock,
@@ -1083,13 +1084,16 @@ class LightEdgeDetModel(BaseModel):
             num_blocks=int(d.get("neck_num_blocks", 2)),
         )
 
-        # ---- head (ultralytics Detect for loss compatibility) ----
+        # ---- head (light shared decoupled head, ultralytics Detect-compatible) ----
         num_levels = len(strides)
-        self.detect = Detect(nc=nc, reg_max=reg_max, ch=(neck_out,) * num_levels)
+        head_ch = int(d.get("head_channels", 56))
+        head = LightDetectHead(nc=nc, reg_max=reg_max, ch=(neck_out,) * num_levels, head_channels=head_ch)
 
-        # Wrap in self.model so model.model[-1] == Detect (required by v8DetectionLoss init)
+        # Wrap head in self.model so model.model[-1] == Detect (required by v8DetectionLoss init).
+        # The head lives ONLY inside self.model (exposed via the `detect` property) so it appears at
+        # a single position in the module tree — otherwise thop/GFLOPs counts it twice.
         self.model = nn.Sequential()
-        self.model.add_module("detect", self.detect)
+        self.model.add_module("detect", head)
 
         # ---- attributes required by ultralytics trainer / loss ----
         self.stride = self.detect.stride
@@ -1136,6 +1140,11 @@ class LightEdgeDetModel(BaseModel):
         self.stride = self.detect.stride
         self.train()
         self.detect.bias_init()  # only run once
+
+    @property
+    def detect(self):
+        """The detection head; lives only inside self.model (single tree position for correct GFLOPs)."""
+        return self.model[-1]
 
     # ------------------------------------------------------------------
     def predict(self, x, profile=False, visualize=False, augment=False, embed=None):
