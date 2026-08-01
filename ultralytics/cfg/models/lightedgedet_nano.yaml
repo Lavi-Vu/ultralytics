@@ -1,14 +1,14 @@
 # LightEdgeDet Nano — ultralytics-compatible model config
 # Architecture: CNN stem + 5 LiteBlock stages (MViT attention on P5/P6)
 # + SPPF global context + LitePAFPN neck + shared decoupled head.
-# Budget: ~2.9M params, ~6.0 GFLOPs (vs YOLO26n: 2.4M/5.4G)
+# Budget: ~3.3M params, ~6.0 GFLOPs NMS mode (vs YOLO26n: 2.4M/5.4G)
 
 # Classification
 nc: 80
 
 # Backbone (HybridBackbone — 5 stages, outputs P3/P4/P5/P6)
 backbone_stem_channels: 20
-backbone_channels: [29, 58, 114, 160, 210]
+backbone_channels: [32, 64, 124, 172, 222]
 backbone_depths: [2, 3, 4, 3, 2]
 backbone_expand_ratios: [4.0, 4.0, 4.0, 4.0, 4.0]
 backbone_se_ratios: [0.25, 0.25, 0.25, 0.25, 0.25]
@@ -22,9 +22,9 @@ neck_num_blocks: 2
 
 # Detect head
 reg_max: 16
-head_channels: 72
+head_channels: 76
 strides: [8, 16, 32, 64]
-end2end: True
+end2end: False
 
 # Training defaults (ultralytics trainer reads these from here as fallback)
 lr0: 0.001
