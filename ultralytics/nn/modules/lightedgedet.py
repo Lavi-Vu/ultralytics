@@ -243,7 +243,7 @@ class HybridBackbone(nn.Module):
 # ---------------------------------------------------------------------------
 
 class _LiteConvBlock(nn.Module):
-    """Depthwise separable conv 3x3."""
+    """Depthwise separable conv 3x3 with residual."""
     def __init__(self, c, c2=None, **kw):
         super().__init__()
         c2 = c2 or c
@@ -252,6 +252,20 @@ class _LiteConvBlock(nn.Module):
             nn.BatchNorm2d(c), nn.SiLU(inplace=True),
             nn.Conv2d(c, c2, 1, bias=False),
             nn.BatchNorm2d(c2), nn.SiLU(inplace=True),
+        )
+    def forward(self, x):
+        return self.conv(x) + x
+
+
+class _LiteDownBlock(nn.Module):
+    """Learnable stride-2 depthwise-separable downsampling."""
+    def __init__(self, c, **kw):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(c, c, 3, stride=2, padding=1, groups=c, bias=False),
+            nn.BatchNorm2d(c), nn.SiLU(inplace=True),
+            nn.Conv2d(c, c, 1, bias=False),
+            nn.BatchNorm2d(c), nn.SiLU(inplace=True),
         )
     def forward(self, x):
         return self.conv(x)
@@ -302,8 +316,13 @@ class LitePAFPN(nn.Module):
                 nn.Sequential(nn.Conv2d(c, c2, 1), nn.BatchNorm2d(c2), nn.SiLU(inplace=True))
                 if c != c2 else nn.Identity()
             )
-        self.fpn_convs = nn.ModuleList([blk(c2) for _ in range(self.num_levels)])
-        self.pan_convs = nn.ModuleList([blk(c2) for _ in range(self.num_levels)])
+        self.fpn_convs = nn.ModuleList(
+            [nn.Sequential(*[blk(c2) for _ in range(self.num_blocks)]) for _ in range(self.num_levels)]
+        )
+        self.pan_convs = nn.ModuleList(
+            [nn.Sequential(*[blk(c2) for _ in range(self.num_blocks)]) for _ in range(self.num_levels)]
+        )
+        self.down_convs = nn.ModuleList([_LiteDownBlock(c2) for _ in range(self.num_levels - 1)])
 
     def forward(self, inputs: List[torch.Tensor]) -> List[torch.Tensor]:
         self._lazy_build([f.shape[1] for f in inputs])
@@ -320,7 +339,7 @@ class LitePAFPN(nn.Module):
         # Bottom-up (PAN)
         outputs = [laterals[0]]
         for i in range(1, self.num_levels):
-            down = F.max_pool2d(outputs[-1], kernel_size=2, stride=2)
+            down = self.down_convs[i - 1](outputs[-1])
             outputs.append(self.pan_convs[i](laterals[i] + down))
 
         return outputs

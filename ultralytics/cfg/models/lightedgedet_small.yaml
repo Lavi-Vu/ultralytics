@@ -22,6 +22,7 @@ neck_num_blocks: 2
 
 # Detect head
 reg_max: 16
+head_type: standard
 head_channels: 80
 strides: [8, 16, 32, 64]
 end2end: False

@@ -1107,11 +1107,15 @@ class LightEdgeDetModel(BaseModel):
             num_blocks=max(1, int(round(d.get("neck_num_blocks", 2) * depth_mul))),
         )
 
-        # ---- head (light shared decoupled head, ultralytics Detect-compatible) ----
+        # ---- head (per-scale Detect or light shared decoupled head) ----
         num_levels = len(strides)
-        head = LightDetectHead(
-            nc=nc, reg_max=reg_max, end2end=end2end, ch=(neck_out,) * num_levels, head_channels=head_ch
-        )
+        head_type = d.get("head_type", "shared")
+        if head_type == "standard":
+            head = Detect(nc=nc, reg_max=reg_max, end2end=end2end, ch=(neck_out,) * num_levels)
+        else:
+            head = LightDetectHead(
+                nc=nc, reg_max=reg_max, end2end=end2end, ch=(neck_out,) * num_levels, head_channels=head_ch
+            )
 
         # Wrap head in self.model so model.model[-1] == Detect (required by v8DetectionLoss init).
         # The head lives ONLY inside self.model (exposed via the `detect` property) so it appears at
