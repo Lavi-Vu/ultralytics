@@ -271,6 +271,44 @@ class _LiteDownBlock(nn.Module):
         return self.conv(x)
 
 
+class CrossScaleFusion(nn.Module):
+    """RT-DETRv4-inspired lightweight cross-scale feature fusion.
+
+    Aggregates the neck's multi-scale outputs at the deepest resolution with a
+    compact multi-head attention, then broadcasts the global context back to
+    every level through a channel gate.  Gives all scales (including P3 small
+    objects) multi-scale global context at negligible FLOP cost.
+    """
+
+    def __init__(self, c: int, num_levels: int = 4, num_heads: int = 4):
+        super().__init__()
+        self.cv = nn.Conv2d(num_levels * c, c, 1, bias=False)
+        self.norm = nn.LayerNorm(c)
+        while c % num_heads != 0 and num_heads > 1:
+            num_heads -= 1
+        self.attn = nn.MultiheadAttention(c, num_heads, batch_first=True, bias=False)
+        self.ffn = nn.Sequential(
+            nn.Conv2d(c, c * 2, 1), nn.SiLU(inplace=True), nn.Conv2d(c * 2, c, 1, bias=False)
+        )
+        self.gate = nn.Sequential(
+            nn.Conv2d(c, c, 1), nn.SiLU(inplace=True), nn.Conv2d(c, c, 1), nn.Sigmoid()
+        )
+
+    def forward(self, feats: List[torch.Tensor]) -> List[torch.Tensor]:
+        target = feats[-1].shape[2:]
+        stacked = torch.cat(
+            [F.interpolate(f, size=target, mode="bilinear", align_corners=False) for f in feats], dim=1
+        )
+        fused = self.cv(stacked)
+        B, C, H, W = fused.shape
+        u = fused.permute(0, 2, 3, 1).reshape(B, H * W, C)
+        u = self.attn(self.norm(u), self.norm(u), self.norm(u), need_weights=False)[0]
+        u = u.reshape(B, H, W, C).permute(0, 3, 1, 2)
+        fused = fused + self.ffn(fused + u)
+        gate = self.gate(F.adaptive_avg_pool2d(fused, 1))
+        return [f * gate for f in feats]
+
+
 class LitePAFPN(nn.Module):
     """Lightweight PAFPN — takes a list of feature maps, returns a list.
 
@@ -285,6 +323,7 @@ class LitePAFPN(nn.Module):
         c2: int,
         num_blocks: int = 2,
         use_depthwise: bool = True,
+        use_cross_fusion: bool = True,
     ):
         super().__init__()
         self.out_channels = c2
@@ -297,6 +336,7 @@ class LitePAFPN(nn.Module):
         self.num_levels = 4
         self.num_blocks = num_blocks
         self.use_depthwise = use_depthwise
+        self.use_cross_fusion = use_cross_fusion
 
     def _lazy_build(self, c_in_list):
         """Build sub-modules the first time we see real input channels."""
@@ -323,6 +363,7 @@ class LitePAFPN(nn.Module):
             [nn.Sequential(*[blk(c2) for _ in range(self.num_blocks)]) for _ in range(self.num_levels)]
         )
         self.down_convs = nn.ModuleList([_LiteDownBlock(c2) for _ in range(self.num_levels - 1)])
+        self.fusion = CrossScaleFusion(c2, self.num_levels) if self.use_cross_fusion else nn.Identity()
 
     def forward(self, inputs: List[torch.Tensor]) -> List[torch.Tensor]:
         self._lazy_build([f.shape[1] for f in inputs])
@@ -341,6 +382,9 @@ class LitePAFPN(nn.Module):
         for i in range(1, self.num_levels):
             down = self.down_convs[i - 1](outputs[-1])
             outputs.append(self.pan_convs[i](laterals[i] + down))
+
+        # Cross-scale global-context fusion (RT-DETRv4-inspired)
+        outputs = self.fusion(outputs)
 
         return outputs
 

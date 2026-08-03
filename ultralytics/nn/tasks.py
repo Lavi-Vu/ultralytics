@@ -1105,6 +1105,7 @@ class LightEdgeDetModel(BaseModel):
             c1=1,  # dummy; real input channels inferred lazily
             c2=neck_out,
             num_blocks=max(1, int(round(d.get("neck_num_blocks", 2) * depth_mul))),
+            use_cross_fusion=bool(d.get("neck_use_cross_fusion", True)),
         )
 
         # ---- head (per-scale Detect or light shared decoupled head) ----

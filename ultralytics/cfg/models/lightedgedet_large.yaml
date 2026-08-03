@@ -18,14 +18,15 @@ backbone_use_sppf: True
 
 # Neck (LitePAFPN)
 neck_out_channels: 160
+neck_use_cross_fusion: True
 neck_num_blocks: 3
 
 # Detect head
-reg_max: 16
+reg_max: 1
 head_type: standard
 head_channels: 112
 strides: [8, 16, 32, 64]
-end2end: False
+end2end: True
 
 # Training defaults (ultralytics trainer reads these from here as fallback)
 lr0: 0.001
