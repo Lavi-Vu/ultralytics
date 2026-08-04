@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ultralytics.nn.modules.block import DFL, SPPF
+from ultralytics.nn.modules.block import C2PSA, C3k2, DFL, SPPF
 from ultralytics.nn.modules.conv import Conv, DWConv
 from ultralytics.nn.modules.head import Detect
 
@@ -238,6 +238,72 @@ class HybridBackbone(nn.Module):
         return features
 
 
+class Yolo26Backbone(nn.Module):
+    """YOLO26-P6-style dense backbone (Conv stem + C3k2 stages + SPPF + C2PSA).
+
+    Faithful port of the YOLO26-P6 backbone: each stage is a stride-2 Conv
+    followed by a C3k2 block, and the deepest level is refined by SPPF + C2PSA.
+    ``c3k_stages`` / ``attn_stages`` select per-stage whether the C3k2 block
+    uses the stronger 3x3 bottleneck (c3k) and PSA attention variants.
+    """
+
+    def __init__(
+        self,
+        c1: int,
+        c2: int,
+        channels_list: str = "[16,32,64,128,192]",
+        depths: str = "[1,1,1,1,1]",
+        c3k_stages: str = "[0,0,0,1,1]",
+        attn_stages: str = "[0,0,0,0,1]",
+    ):
+        """Initialize Yolo26Backbone.
+
+        Args:
+            c1 (int): Input channels.
+            c2 (int): Unused (kept for parse_model compatibility).
+            channels_list (str): Output channels per stage, list-like string.
+            depths (str): C3k2 block depth per stage, list-like string.
+            c3k_stages (str): 1 where a stage uses the c3k (3x3) bottleneck.
+            attn_stages (str): 1 where a stage uses PSA attention.
+        """
+        super().__init__()
+        import ast as _ast
+        if isinstance(channels_list, str):
+            channels_list = _ast.literal_eval(channels_list)
+        if isinstance(depths, str):
+            depths = _ast.literal_eval(depths)
+        if isinstance(c3k_stages, str):
+            c3k_stages = _ast.literal_eval(c3k_stages)
+        if isinstance(attn_stages, str):
+            attn_stages = _ast.literal_eval(attn_stages)
+
+        self.stem = Conv(c1, channels_list[0], 3, 2)
+        self.stages = nn.ModuleList()
+        in_c = channels_list[0]
+        for c, d, c3k, attn in zip(channels_list, depths, c3k_stages, attn_stages):
+            self.stages.append(
+                nn.Sequential(
+                    Conv(in_c, c, 3, 2),
+                    C3k2(c, c, n=d, c3k=bool(c3k), e=0.5 if c3k else 0.25, attn=bool(attn)),
+                )
+            )
+            in_c = c
+        self.sppf = SPPF(in_c, in_c, k=5)
+        self.c2psa = C2PSA(in_c, in_c, n=1)
+        self.out_indices = [1, 2, 3, 4]
+        self.channels_list = channels_list
+
+    def forward(self, x):
+        features = []
+        x = self.stem(x)
+        for idx, stage in enumerate(self.stages):
+            x = stage(x)
+            if idx in self.out_indices:
+                features.append(x)
+        features[-1] = self.c2psa(self.sppf(features[-1]))
+        return features
+
+
 # ---------------------------------------------------------------------------
 #  LitePAFPN — Lightweight PAFPN neck (list -> list)
 # ---------------------------------------------------------------------------
@@ -382,6 +448,78 @@ class LitePAFPN(nn.Module):
         for i in range(1, self.num_levels):
             down = self.down_convs[i - 1](outputs[-1])
             outputs.append(self.pan_convs[i](laterals[i] + down))
+
+        # Cross-scale global-context fusion (RT-DETRv4-inspired)
+        outputs = self.fusion(outputs)
+
+        return outputs
+
+
+class C3k2PAFPN(nn.Module):
+    """YOLO26-style dense PAFPN neck (list -> list).
+
+    Each level is projected to ``c2`` channels with a 1x1 Conv, then fused
+    top-down (upsample + add) and bottom-up (stride-2 Conv + add) with C3k2
+    blocks, mirroring the YOLO26-P6 head.  ``use_cross_fusion`` optionally
+    appends the RT-DETRv4-inspired CrossScaleFusion.
+    """
+
+    def __init__(
+        self,
+        c1: int,
+        c2: int,
+        num_blocks: int = 1,
+        use_cross_fusion: bool = True,
+        num_levels: int = 4,
+    ):
+        """Initialize C3k2PAFPN.
+
+        Args:
+            c1 (int): Unused (kept for parse_model compatibility).
+            c2 (int): Output channel count for every level.
+            num_blocks (int): C3k2 block depth per fusion.
+            use_cross_fusion (bool): Whether to append CrossScaleFusion.
+            num_levels (int): Number of pyramid levels.
+        """
+        super().__init__()
+        self.out_channels = c2
+        self.num_levels = num_levels
+        self.num_blocks = num_blocks
+        self.use_cross_fusion = use_cross_fusion
+        self._built = False
+        self._c_in = None
+
+    def _lazy_build(self, c_in_list):
+        """Build sub-modules the first time we see real input channels."""
+        if self._built:
+            return
+        self._built = True
+        self._c_in = c_in_list
+        c2 = self.out_channels
+        n = self.num_blocks
+        self.lateral_convs = nn.ModuleList(Conv(c, c2, 1) for c in c_in_list)
+        self.fpn_convs = nn.ModuleList(C3k2(c2, c2, n=n, c3k=True, e=0.5) for _ in range(self.num_levels))
+        self.down_convs = nn.ModuleList(Conv(c2, c2, 3, 2) for _ in range(self.num_levels - 1))
+        self.pan_convs = nn.ModuleList(C3k2(c2, c2, n=n, c3k=True, e=0.5) for _ in range(1, self.num_levels))
+        self.fusion = CrossScaleFusion(c2, self.num_levels) if self.use_cross_fusion else nn.Identity()
+
+    def forward(self, inputs: List[torch.Tensor]) -> List[torch.Tensor]:
+        self._lazy_build([f.shape[1] for f in inputs])
+
+        reduced = [lat(f) for lat, f in zip(self.lateral_convs, inputs)]
+
+        # Top-down (FPN)
+        laterals = [reduced[-1]]
+        for i in range(self.num_levels - 2, -1, -1):
+            up = F.interpolate(laterals[-1], size=reduced[i].shape[2:], mode="nearest")
+            laterals.append(self.fpn_convs[i](reduced[i] + up))
+        laterals = laterals[::-1]
+
+        # Bottom-up (PAN)
+        outputs = [laterals[0]]
+        for i in range(1, self.num_levels):
+            down = self.down_convs[i - 1](outputs[-1])
+            outputs.append(self.pan_convs[i - 1](laterals[i] + down))
 
         # Cross-scale global-context fusion (RT-DETRv4-inspired)
         outputs = self.fusion(outputs)

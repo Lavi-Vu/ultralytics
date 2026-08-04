@@ -76,11 +76,13 @@ from ultralytics.nn.modules import (
     v10Detect,
 )
 from ultralytics.nn.modules.lightedgedet import (
+    C3k2PAFPN,
     HybridBackbone,
     LightDetectHead,
     LiteBlock,
     LitePAFPN,
     MViTBlock,
+    Yolo26Backbone,
 )
 from ultralytics.utils import (
     DEFAULT_CFG_DICT,
@@ -1084,29 +1086,50 @@ class LightEdgeDetModel(BaseModel):
         head_ch = max(16, int(min(round(head_ch * width_mul), max_ch)))
 
         # ---- backbone ----
-        self.backbone = HybridBackbone(
-            c1=ch,
-            c2=0,  # unused
-            channels_list=str(backbone_ch),
-            depths=str(backbone_dep),
-            expand_ratios=str(d.get("backbone_expand_ratios", "[4.0,4.0,4.0,4.0,4.0]"))
-            if isinstance(d.get("backbone_expand_ratios"), list) else str(d.get("backbone_expand_ratios", "[4.0,4.0,4.0,4.0,4.0]")),
-            se_ratios=str(d.get("backbone_se_ratios", "[0.25,0.25,0.25,0.25,0.25]"))
-            if isinstance(d.get("backbone_se_ratios"), list) else str(d.get("backbone_se_ratios", "[0.25,0.25,0.25,0.25,0.25]")),
-            attn_stages=str(d.get("backbone_attn_stages", "[0,0,0,1,1]"))
-            if isinstance(d.get("backbone_attn_stages"), list) else str(d.get("backbone_attn_stages", "[0,0,0,1,1]")),
-            stem_channels=stem_ch,
-            drop_path_rate=float(d.get("backbone_drop_path_rate", 0.1)),
-            use_sppf=use_sppf,
-        )
+        backbone_arch = d.get("backbone_arch", "hybrid")
+        if backbone_arch == "yolo26":
+            self.backbone = Yolo26Backbone(
+                c1=ch,
+                c2=0,  # unused
+                channels_list=str(backbone_ch),
+                depths=str(backbone_dep),
+                c3k_stages=str(d.get("backbone_c3k_stages", "[0,0,0,1,1]")),
+                attn_stages=str(d.get("backbone_attn_stages", "[0,0,0,0,1]")),
+            )
+        else:
+            self.backbone = HybridBackbone(
+                c1=ch,
+                c2=0,  # unused
+                channels_list=str(backbone_ch),
+                depths=str(backbone_dep),
+                expand_ratios=str(d.get("backbone_expand_ratios", "[4.0,4.0,4.0,4.0,4.0]"))
+                if isinstance(d.get("backbone_expand_ratios"), list) else str(d.get("backbone_expand_ratios", "[4.0,4.0,4.0,4.0,4.0]")),
+                se_ratios=str(d.get("backbone_se_ratios", "[0.25,0.25,0.25,0.25,0.25]"))
+                if isinstance(d.get("backbone_se_ratios"), list) else str(d.get("backbone_se_ratios", "[0.25,0.25,0.25,0.25,0.25]")),
+                attn_stages=str(d.get("backbone_attn_stages", "[0,0,0,1,1]"))
+                if isinstance(d.get("backbone_attn_stages"), list) else str(d.get("backbone_attn_stages", "[0,0,0,1,1]")),
+                stem_channels=stem_ch,
+                drop_path_rate=float(d.get("backbone_drop_path_rate", 0.1)),
+                use_sppf=use_sppf,
+            )
 
         # ---- neck ----
-        self.neck = LitePAFPN(
-            c1=1,  # dummy; real input channels inferred lazily
-            c2=neck_out,
-            num_blocks=max(1, int(round(d.get("neck_num_blocks", 2) * depth_mul))),
-            use_cross_fusion=bool(d.get("neck_use_cross_fusion", True)),
-        )
+        neck_arch = d.get("neck_arch", "lite")
+        if neck_arch == "c3k2pafpn":
+            self.neck = C3k2PAFPN(
+                c1=1,  # dummy; real input channels inferred lazily
+                c2=neck_out,
+                num_blocks=max(1, int(round(d.get("neck_num_blocks", 1) * depth_mul))),
+                use_cross_fusion=bool(d.get("neck_use_cross_fusion", True)),
+                num_levels=len(strides),
+            )
+        else:
+            self.neck = LitePAFPN(
+                c1=1,  # dummy; real input channels inferred lazily
+                c2=neck_out,
+                num_blocks=max(1, int(round(d.get("neck_num_blocks", 2) * depth_mul))),
+                use_cross_fusion=bool(d.get("neck_use_cross_fusion", True)),
+            )
 
         # ---- head (per-scale Detect or light shared decoupled head) ----
         num_levels = len(strides)
@@ -2348,7 +2371,7 @@ def guess_model_task(model):
                 return "obb"
             elif isinstance(m, Depth):
                 return "depth"
-            elif isinstance(m, HybridBackbone):
+            elif isinstance(m, (HybridBackbone, Yolo26Backbone)):
                 return "lightedgedet"
             elif isinstance(m, (Detect, WorldDetect, YOLOEDetect, v10Detect)):
                 return "detect"
