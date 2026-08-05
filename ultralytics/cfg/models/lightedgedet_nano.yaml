@@ -36,7 +36,7 @@ head_type: standard
 head_channels: 104
 reg_max: 1
 strides: [8, 16, 32, 64]
-end2end: True
+end2end: False
 
 # DINOv3 distillation weight (RT-DETRv4 recipe; teacher passed via `distill_model` arg,
 # master switch `distill: True/False` in cfg/default.yaml)

@@ -1222,7 +1222,10 @@ class LightEdgeDetModel(BaseModel):
         if not self.is_fused():
             for m in self.modules():
                 if m is not self and hasattr(m, "fuse") and type(m).fuse is not BaseModel.fuse:
-                    m.fuse()
+                    if isinstance(m, Detect) and not getattr(m, "end2end", False):
+                        pass  # keep the non-E2E head intact (its one2many branch drives inference)
+                    else:
+                        m.fuse()
                 if isinstance(m, (Conv, Conv2, DWConv)) and hasattr(m, "bn"):
                     if isinstance(m, Conv2):
                         m.fuse_convs()

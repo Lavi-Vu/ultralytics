@@ -34,7 +34,7 @@ head_type: standard
 head_channels: 160
 reg_max: 1
 strides: [8, 16, 32, 64]
-end2end: True
+end2end: False
 
 # Training defaults (ultralytics trainer reads these from here as fallback)
 lr0: 0.001
