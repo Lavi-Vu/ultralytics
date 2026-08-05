@@ -1,29 +1,34 @@
-# LightEdgeDet Nano (YOLO26-P6 backbone + C3k2 PAFPN) — ultralytics-compatible model config
-# Architecture: dense Conv stem + 5 C3k2 stages (c3k bottleneck on P5/P6, PSA attn on P6)
-# + SPPF + C2PSA global context + C3k2PAFPN neck (cross-scale fusion) + per-scale Detect head.
+# LightEdgeDet Nano — ultralytics-compatible model config
+# Architecture: CNN stem + 5 LiteBlock stages (LitePSA depthwise attention on P5/P6)
+# + SPPF global context + LitePAFPN neck (cross-scale fusion) + per-scale Detect head.
+# LiteBlock uses RepDWConv: reparameterized depthwise convs that fuse to a single
+# depthwise 3x3 at inference (dense-like training capacity, depthwise inference cost).
 # Recipe: YOLO26 E2E (end-to-end, reg_max=1) + RT-DETRv4 cross-scale fusion in the neck.
-# Budget: ~2.9M params, ~6.8 GFLOPs (vs YOLO26n: 2.4M/5.4G @ 0.401)
+# Budget: ~3.9M params, ~6.7 GFLOPs (inference, fused)
 
 # Classification
 nc: 80
 
-# Backbone (Yolo26Backbone — 5 stages, outputs P3/P4/P5/P6)
-backbone_arch: yolo26
-backbone_channels: [16, 32, 64, 128, 192]
-backbone_depths: [1, 1, 1, 1, 1]
-backbone_c3k_stages: [0, 0, 0, 1, 1]
-backbone_attn_stages: [0, 0, 0, 0, 1]
+# Backbone (HybridBackbone — 5 stages, outputs P3/P4/P5/P6)
+backbone_stem_channels: 20
+backbone_channels: [37, 74, 140, 196, 244]
+backbone_depths: [2, 3, 4, 3, 2]
+backbone_expand_ratios: [2.5, 2.5, 3.0, 3.5, 4.0]
+backbone_se_ratios: [0.25, 0.25, 0.25, 0.25, 0.25]
+backbone_attn_stages: [0, 0, 0, 1, 1]
+backbone_drop_path_rate: 0.1
 backbone_use_sppf: True
+backbone_psa_ratio: 0.5
+backbone_reparam: True
 
-# Neck (C3k2PAFPN — dense C3k2 top-down/bottom-up + cross-scale fusion)
-neck_arch: c3k2pafpn
-neck_out_channels: 132
-neck_num_blocks: 1
+# Neck (LitePAFPN — stacked residual blocks + learnable downsampling + cross-scale fusion)
+neck_out_channels: 112
+neck_num_blocks: 4
 neck_use_cross_fusion: True
 
 # Detect head (standard per-scale Detect, YOLO26 end-to-end recipe)
 head_type: standard
-head_channels: 132
+head_channels: 112
 reg_max: 1
 strides: [8, 16, 32, 64]
 end2end: True

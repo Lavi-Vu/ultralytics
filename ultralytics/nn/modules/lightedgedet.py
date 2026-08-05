@@ -14,9 +14,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ultralytics.nn.modules.block import C2PSA, C3k2, DFL, SPPF
-from ultralytics.nn.modules.conv import Conv, DWConv
+from ultralytics.nn.modules.block import DFL, SPPF
+from ultralytics.nn.modules.conv import Conv, DWConv, autopad
 from ultralytics.nn.modules.head import Detect
+from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
 
 # ---------------------------------------------------------------------------
@@ -55,15 +56,82 @@ class DropPath(nn.Module):
 
 
 # ---------------------------------------------------------------------------
+#  RepDWConv — reparameterized depthwise conv (train multi-branch, fuse at inference)
+# ---------------------------------------------------------------------------
+
+class RepDWConv(nn.Module):
+    """Reparameterized depthwise convolution.
+
+    During training the block is a sum of a 3x3 depthwise branch, a 1x1
+    depthwise branch and (when stride==1) an identity branch — more capacity for
+    the same inference cost.  ``fuse()`` folds the branches into a single 3x3
+    depthwise convolution, so inference/export runs at plain-depthwise FLOPs.
+    """
+
+    def __init__(self, c: int, k: int = 3, s: int = 1, p: int = None):
+        """Initialize RepDWConv.
+
+        Args:
+            c (int): Number of channels.
+            k (int): Kernel size.
+            s (int): Stride.
+            p (int, optional): Padding.
+        """
+        super().__init__()
+        p = autopad(k, p)
+        self.c, self.k, self.s, self.p = c, k, s, p
+        self.conv3 = Conv(c, c, k, s, p, g=c, act=False)
+        self.conv1 = Conv(c, c, 1, 1, 0, g=c, act=False) if s == 1 else None
+        self.add_identity = s == 1
+        self.fused = False
+
+    def forward(self, x):
+        y = self.conv3(x)
+        if self.conv1 is not None:
+            y = y + self.conv1(x)
+        if self.add_identity:
+            y = y + x
+        return y
+
+    def fuse(self):
+        """Fold all branches into a single depthwise convolution (exact)."""
+        if self.fused:
+            return
+        self.fused = True
+        pad = self.k // 2
+        conv = fuse_conv_and_bn(self.conv3.conv, self.conv3.bn)
+        if self.conv1 is not None:
+            conv1 = fuse_conv_and_bn(self.conv1.conv, self.conv1.bn)
+            w1 = torch.zeros_like(conv.weight)
+            w1[..., pad, pad] = conv1.weight.squeeze(-1).squeeze(-1)
+            conv.weight.data.add_(w1)
+            conv.bias.data.add_(conv1.bias)
+        if self.add_identity:
+            wi = torch.zeros_like(conv.weight)
+            wi[..., pad, pad] = 1.0
+            conv.weight.data.add_(wi)
+        self.conv3.conv = conv
+        self.conv3.forward = self.conv3.forward_fuse
+        self.conv3.__delattr__("bn")
+        self.conv1 = None
+        self.add_identity = False
+        self.forward = self.forward_fuse
+
+    def forward_fuse(self, x):
+        return self.conv3(x)
+
+
+# ---------------------------------------------------------------------------
 #  LiteBlock — [1x1 expand] -> [DW 3x3 stride] -> [SE] -> [1x1 proj] + residual
 # ---------------------------------------------------------------------------
 
 class LiteBlock(nn.Module):
-    """EfficientNet-style block compatible with parse_model.
+    """Depthwise-separable MBConv-style block.
 
-    Constructor: (c1, c2, depth, expand_ratio, se_ratio, drop_path_rate)
+    Constructor: (c1, c2, depth, expand_ratio, se_ratio, drop_path_rate, stride).
     ``depth`` is accepted for API uniformity but ignored (depth is encoded in
-    the YAML repeat count).
+    the YAML repeat count).  With ``reparam=True`` the depthwise 3x3 is a
+    RepDWConv, giving train-time multi-branch capacity at zero inference cost.
     """
 
     def __init__(
@@ -75,23 +143,20 @@ class LiteBlock(nn.Module):
         se_ratio: float = 0.0,
         drop_path_rate: float = 0.0,
         stride: int = 1,
+        reparam: bool = True,
     ):
         super().__init__()
         mid_c = int(c1 * expand_ratio)
         self.use_residual = stride == 1 and c1 == c2
 
         # 1x1 expansion
-        self.expand = nn.Identity() if expand_ratio == 1.0 else nn.Sequential(
-            nn.Conv2d(c1, mid_c, 1, bias=False),
-            nn.BatchNorm2d(mid_c),
-            nn.SiLU(inplace=True),
-        )
+        self.expand = nn.Identity() if expand_ratio == 1.0 else Conv(c1, mid_c, 1)
 
-        # Depthwise 3x3
-        self.dw = nn.Sequential(
-            nn.Conv2d(mid_c, mid_c, 3, stride=stride, padding=1, groups=mid_c, bias=False),
-            nn.BatchNorm2d(mid_c),
-        )
+        # Depthwise 3x3 (reparameterized when stride==1)
+        if reparam and stride == 1:
+            self.dw = RepDWConv(mid_c, 3, 1, 1)
+        else:
+            self.dw = Conv(mid_c, mid_c, 3, stride, 1, g=mid_c, act=False)
 
         # SE
         self.se = nn.Identity() if se_ratio == 0.0 else SqueezeExcitation(
@@ -99,59 +164,61 @@ class LiteBlock(nn.Module):
         )
 
         # 1x1 projection
-        self.proj = nn.Sequential(
-            nn.Conv2d(mid_c, c2, 1, bias=False),
-            nn.BatchNorm2d(c2),
-        )
+        self.proj = Conv(mid_c, c2, 1, act=False)
 
         self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0 else nn.Identity()
 
     def forward(self, x):
-        h = self.proj(self.se(self.dw(self.expand(x))))
+        h = self.dw(self.expand(x))
+        h = F.silu(h, inplace=True)
+        h = self.proj(self.se(h))
         return self.drop_path(h) + x if self.use_residual else h
 
+    def fuse(self):
+        """Fuse the reparameterized depthwise conv (if present)."""
+        if isinstance(self.dw, RepDWConv) and not self.dw.fused:
+            self.dw.fuse()
+
 
 # ---------------------------------------------------------------------------
-#  MViTBlock — MobileViT-style inline transformer
+#  LitePSA — depthwise-separable split-route attention block
 # ---------------------------------------------------------------------------
 
-class MViTBlock(nn.Module):
-    """Local DW conv + global MHSA + FFN."""
+class LitePSA(nn.Module):
+    """Depthwise-separable convolutional attention block (C2PSA-inspired).
 
-    def __init__(
-        self,
-        channels: int,
-        ff_hidden_dim: int = 384,
-        num_heads: int = 4,
-        drop_path_rate: float = 0.0,
-    ):
+    Split-route design without any quadratic attention: one route preserves
+    local spatial detail with a depthwise 3x3, the other carries global channel
+    context through a depthwise conv gated by a squeeze-excitation signal.  All
+    operations are depthwise-separable apart from the cheap 1x1 split/fuse.
+    """
+
+    def __init__(self, c: int, e: float = 0.5):
+        """Initialize LitePSA.
+
+        Args:
+            c (int): Input and output channels.
+            e (float): Hidden expansion ratio for the split-route.
+        """
         super().__init__()
-        self.local_rep = nn.Sequential(
-            nn.Conv2d(channels, channels, 3, padding=1, groups=channels, bias=False),
-            nn.BatchNorm2d(channels),
-            nn.Conv2d(channels, channels, 1, bias=False),
+        c_ = max(int(c * e), 8)
+        self.cv1 = Conv(c, 2 * c_, 1)
+        self.local = nn.Sequential(Conv(c_, c_, 3, 1, 1, g=c_), Conv(c_, c_, 1, act=False))
+        self.context = nn.Sequential(Conv(c_, c_, 3, 1, 1, g=c_), Conv(c_, c_, 1, act=False))
+        self.gate = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            Conv(c_, max(c_ // 4, 4), 1),
+            Conv(max(c_ // 4, 4), c_, 1, act=False),
+            nn.Sigmoid(),
         )
-        self.norm = nn.LayerNorm(channels)
-        while channels % num_heads != 0 and num_heads > 1:
-            num_heads -= 1
-        self.attn = nn.MultiheadAttention(channels, num_heads, batch_first=True, bias=False)
-        self.ffn = nn.Sequential(
-            nn.Linear(channels, ff_hidden_dim, bias=False),
-            nn.LayerNorm(ff_hidden_dim),
-            nn.SiLU(inplace=True),
-            nn.Linear(ff_hidden_dim, channels, bias=False),
-            nn.LayerNorm(channels),
-        )
-        self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0 else nn.Identity()
+        self.cv2 = Conv(2 * c_, c, 1, act=False)
 
     def forward(self, x):
-        B, C, H, W = x.shape
-        local_feat = self.local_rep(x)
-        u = x.permute(0, 2, 3, 1).reshape(B, H * W, C)
-        u = self.norm(u)
-        u = self.attn(u, u, u, need_weights=False)[0]
-        u = self.ffn(u).reshape(B, H, W, C).permute(0, 3, 1, 2)
-        return self.drop_path(u) + local_feat
+        a, b = self.cv1(x).split((self.cv1.conv.out_channels // 2,) * 2, dim=1)
+        a = self.local(a)
+        b = self.context(b)
+        b = b * self.gate(b)
+        return self.cv2(torch.cat((a, b), 1))
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +245,8 @@ class HybridBackbone(nn.Module):
         stem_channels: int = 16,
         drop_path_rate: float = 0.1,
         use_sppf: bool = True,
+        psa_ratio: float = 0.5,
+        reparam: bool = True,
     ):
         super().__init__()
         import ast as _ast
@@ -211,11 +280,9 @@ class HybridBackbone(nn.Module):
                 stride = 2 if bi == 0 else 1
                 dp = dpr[dpr_idx]; dpr_idx += 1
                 if use_attn and bi == depth // 2:
-                    ff_dim = max(128, out_c * 2)
-                    nh = max(2, out_c // 32)
-                    blocks.append(MViTBlock(in_c, ff_dim, nh, dp))
+                    blocks.append(LitePSA(out_c, e=psa_ratio))
                 else:
-                    blocks.append(LiteBlock(in_c, out_c, 1, expand, se_r, dp, stride))
+                    blocks.append(LiteBlock(in_c, out_c, 1, expand, se_r, dp, stride, reparam))
                 in_c = out_c
             self.stages.append(nn.Sequential(*blocks))
 
@@ -235,72 +302,6 @@ class HybridBackbone(nn.Module):
                 features.append(x)
         if isinstance(self.sppf, SPPF):
             features[-1] = self.sppf(features[-1])
-        return features
-
-
-class Yolo26Backbone(nn.Module):
-    """YOLO26-P6-style dense backbone (Conv stem + C3k2 stages + SPPF + C2PSA).
-
-    Faithful port of the YOLO26-P6 backbone: each stage is a stride-2 Conv
-    followed by a C3k2 block, and the deepest level is refined by SPPF + C2PSA.
-    ``c3k_stages`` / ``attn_stages`` select per-stage whether the C3k2 block
-    uses the stronger 3x3 bottleneck (c3k) and PSA attention variants.
-    """
-
-    def __init__(
-        self,
-        c1: int,
-        c2: int,
-        channels_list: str = "[16,32,64,128,192]",
-        depths: str = "[1,1,1,1,1]",
-        c3k_stages: str = "[0,0,0,1,1]",
-        attn_stages: str = "[0,0,0,0,1]",
-    ):
-        """Initialize Yolo26Backbone.
-
-        Args:
-            c1 (int): Input channels.
-            c2 (int): Unused (kept for parse_model compatibility).
-            channels_list (str): Output channels per stage, list-like string.
-            depths (str): C3k2 block depth per stage, list-like string.
-            c3k_stages (str): 1 where a stage uses the c3k (3x3) bottleneck.
-            attn_stages (str): 1 where a stage uses PSA attention.
-        """
-        super().__init__()
-        import ast as _ast
-        if isinstance(channels_list, str):
-            channels_list = _ast.literal_eval(channels_list)
-        if isinstance(depths, str):
-            depths = _ast.literal_eval(depths)
-        if isinstance(c3k_stages, str):
-            c3k_stages = _ast.literal_eval(c3k_stages)
-        if isinstance(attn_stages, str):
-            attn_stages = _ast.literal_eval(attn_stages)
-
-        self.stem = Conv(c1, channels_list[0], 3, 2)
-        self.stages = nn.ModuleList()
-        in_c = channels_list[0]
-        for c, d, c3k, attn in zip(channels_list, depths, c3k_stages, attn_stages):
-            self.stages.append(
-                nn.Sequential(
-                    Conv(in_c, c, 3, 2),
-                    C3k2(c, c, n=d, c3k=bool(c3k), e=0.5 if c3k else 0.25, attn=bool(attn)),
-                )
-            )
-            in_c = c
-        self.sppf = SPPF(in_c, in_c, k=5)
-        self.c2psa = C2PSA(in_c, in_c, n=1)
-        self.out_indices = [1, 2, 3, 4]
-        self.channels_list = channels_list
-
-    def forward(self, x):
-        features = []
-        x = self.stem(x)
-        for idx, stage in enumerate(self.stages):
-            x = stage(x)
-            if idx in self.out_indices:
-                features.append(x)
-        features[-1] = self.c2psa(self.sppf(features[-1]))
         return features
 
 
@@ -448,78 +449,6 @@ class LitePAFPN(nn.Module):
         for i in range(1, self.num_levels):
             down = self.down_convs[i - 1](outputs[-1])
             outputs.append(self.pan_convs[i](laterals[i] + down))
-
-        # Cross-scale global-context fusion (RT-DETRv4-inspired)
-        outputs = self.fusion(outputs)
-
-        return outputs
-
-
-class C3k2PAFPN(nn.Module):
-    """YOLO26-style dense PAFPN neck (list -> list).
-
-    Each level is projected to ``c2`` channels with a 1x1 Conv, then fused
-    top-down (upsample + add) and bottom-up (stride-2 Conv + add) with C3k2
-    blocks, mirroring the YOLO26-P6 head.  ``use_cross_fusion`` optionally
-    appends the RT-DETRv4-inspired CrossScaleFusion.
-    """
-
-    def __init__(
-        self,
-        c1: int,
-        c2: int,
-        num_blocks: int = 1,
-        use_cross_fusion: bool = True,
-        num_levels: int = 4,
-    ):
-        """Initialize C3k2PAFPN.
-
-        Args:
-            c1 (int): Unused (kept for parse_model compatibility).
-            c2 (int): Output channel count for every level.
-            num_blocks (int): C3k2 block depth per fusion.
-            use_cross_fusion (bool): Whether to append CrossScaleFusion.
-            num_levels (int): Number of pyramid levels.
-        """
-        super().__init__()
-        self.out_channels = c2
-        self.num_levels = num_levels
-        self.num_blocks = num_blocks
-        self.use_cross_fusion = use_cross_fusion
-        self._built = False
-        self._c_in = None
-
-    def _lazy_build(self, c_in_list):
-        """Build sub-modules the first time we see real input channels."""
-        if self._built:
-            return
-        self._built = True
-        self._c_in = c_in_list
-        c2 = self.out_channels
-        n = self.num_blocks
-        self.lateral_convs = nn.ModuleList(Conv(c, c2, 1) for c in c_in_list)
-        self.fpn_convs = nn.ModuleList(C3k2(c2, c2, n=n, c3k=True, e=0.5) for _ in range(self.num_levels))
-        self.down_convs = nn.ModuleList(Conv(c2, c2, 3, 2) for _ in range(self.num_levels - 1))
-        self.pan_convs = nn.ModuleList(C3k2(c2, c2, n=n, c3k=True, e=0.5) for _ in range(1, self.num_levels))
-        self.fusion = CrossScaleFusion(c2, self.num_levels) if self.use_cross_fusion else nn.Identity()
-
-    def forward(self, inputs: List[torch.Tensor]) -> List[torch.Tensor]:
-        self._lazy_build([f.shape[1] for f in inputs])
-
-        reduced = [lat(f) for lat, f in zip(self.lateral_convs, inputs)]
-
-        # Top-down (FPN)
-        laterals = [reduced[-1]]
-        for i in range(self.num_levels - 2, -1, -1):
-            up = F.interpolate(laterals[-1], size=reduced[i].shape[2:], mode="nearest")
-            laterals.append(self.fpn_convs[i](reduced[i] + up))
-        laterals = laterals[::-1]
-
-        # Bottom-up (PAN)
-        outputs = [laterals[0]]
-        for i in range(1, self.num_levels):
-            down = self.down_convs[i - 1](outputs[-1])
-            outputs.append(self.pan_convs[i - 1](laterals[i] + down))
 
         # Cross-scale global-context fusion (RT-DETRv4-inspired)
         outputs = self.fusion(outputs)
