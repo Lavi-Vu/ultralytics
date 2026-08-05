@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ultralytics.nn.modules.block import DFL, SPPF
+from ultralytics.nn.modules.block import DFL, PSABlock, SPPF
 from ultralytics.nn.modules.conv import Conv, DWConv, autopad
 from ultralytics.nn.modules.head import Detect
 from ultralytics.utils.torch_utils import fuse_conv_and_bn
@@ -130,8 +130,10 @@ class LiteBlock(nn.Module):
 
     Constructor: (c1, c2, depth, expand_ratio, se_ratio, drop_path_rate, stride).
     ``depth`` is accepted for API uniformity but ignored (depth is encoded in
-    the YAML repeat count).  With ``reparam=True`` the depthwise 3x3 is a
+    the YAML repeat count).  With ``reparam=True`` the depthwise conv is a
     RepDWConv, giving train-time multi-branch capacity at zero inference cost.
+    ``k`` selects the depthwise kernel size (large-kernel depthwise on deep
+    stages follows the HGNetv2/PResNet large-kernel recipe).
     """
 
     def __init__(
@@ -144,6 +146,7 @@ class LiteBlock(nn.Module):
         drop_path_rate: float = 0.0,
         stride: int = 1,
         reparam: bool = True,
+        k: int = 3,
     ):
         super().__init__()
         mid_c = int(c1 * expand_ratio)
@@ -152,11 +155,11 @@ class LiteBlock(nn.Module):
         # 1x1 expansion
         self.expand = nn.Identity() if expand_ratio == 1.0 else Conv(c1, mid_c, 1)
 
-        # Depthwise 3x3 (reparameterized when stride==1)
+        # Depthwise (reparameterized when stride==1)
         if reparam and stride == 1:
-            self.dw = RepDWConv(mid_c, 3, 1, 1)
+            self.dw = RepDWConv(mid_c, k, 1, None)
         else:
-            self.dw = Conv(mid_c, mid_c, 3, stride, 1, g=mid_c, act=False)
+            self.dw = Conv(mid_c, mid_c, k, stride, None, g=mid_c, act=False)
 
         # SE
         self.se = nn.Identity() if se_ratio == 0.0 else SqueezeExcitation(
@@ -185,39 +188,38 @@ class LiteBlock(nn.Module):
 # ---------------------------------------------------------------------------
 
 class LitePSA(nn.Module):
-    """Depthwise-separable convolutional attention block (C2PSA-inspired).
+    """C2PSA-style split-route attention for LightEdgeDet.
 
-    Split-route design without any quadratic attention: one route preserves
-    local spatial detail with a depthwise 3x3, the other carries global channel
-    context through a depthwise conv gated by a squeeze-excitation signal.  All
-    operations are depthwise-separable apart from the cheap 1x1 split/fuse.
+    Two routes after a 1x1 split: one preserves local spatial detail with a
+    depthwise 3x3; the other applies a stack of YOLO26 ``PSABlock`` (conv-based
+    multi-head self-attention + FFN) for global context.  Attention runs on the
+    reduced hidden width at deep, low-resolution stages, so the quadratic term
+    stays cheap.  Heavy ops remain depthwise/1x1 apart from the attention's
+    compact 1x1 qkv projection.
     """
 
-    def __init__(self, c: int, e: float = 0.5):
+    def __init__(self, c: int, e: float = 0.5, n: int = 1, attn_ratio: float = 0.5):
         """Initialize LitePSA.
 
         Args:
             c (int): Input and output channels.
             e (float): Hidden expansion ratio for the split-route.
+            n (int): Number of PSABlock attention stacks on the context route.
+            attn_ratio (float): Key-to-head dimension ratio in the attention.
         """
         super().__init__()
         c_ = max(int(c * e), 8)
         self.cv1 = Conv(c, 2 * c_, 1)
         self.local = nn.Sequential(Conv(c_, c_, 3, 1, 1, g=c_), Conv(c_, c_, 1, act=False))
-        self.context = nn.Sequential(Conv(c_, c_, 3, 1, 1, g=c_), Conv(c_, c_, 1, act=False))
-        self.gate = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            Conv(c_, max(c_ // 4, 4), 1),
-            Conv(max(c_ // 4, 4), c_, 1, act=False),
-            nn.Sigmoid(),
+        self.attn = nn.Sequential(
+            *(PSABlock(c_, attn_ratio=attn_ratio, num_heads=max(c_ // 64, 1)) for _ in range(n))
         )
         self.cv2 = Conv(2 * c_, c, 1, act=False)
 
     def forward(self, x):
         a, b = self.cv1(x).split((self.cv1.conv.out_channels // 2,) * 2, dim=1)
         a = self.local(a)
-        b = self.context(b)
-        b = b * self.gate(b)
+        b = self.attn(b)
         return self.cv2(torch.cat((a, b), 1))
 
 
@@ -242,10 +244,12 @@ class HybridBackbone(nn.Module):
         expand_ratios: str = "[4.0,4.0,4.0,4.0,4.0]",
         se_ratios: str = "[0.25,0.25,0.25,0.25,0.25]",
         attn_stages: str = "[0,0,0,1,1]",
+        kernel_sizes: str = "[3,3,3,3,3]",
         stem_channels: int = 16,
         drop_path_rate: float = 0.1,
         use_sppf: bool = True,
         psa_ratio: float = 0.5,
+        psa_blocks: int = 1,
         reparam: bool = True,
     ):
         super().__init__()
@@ -260,6 +264,8 @@ class HybridBackbone(nn.Module):
             se_ratios = _ast.literal_eval(se_ratios)
         if isinstance(attn_stages, str):
             attn_stages = _ast.literal_eval(attn_stages)
+        if isinstance(kernel_sizes, str):
+            kernel_sizes = _ast.literal_eval(kernel_sizes)
 
         self.stem = nn.Sequential(
             nn.Conv2d(c1, stem_channels, 3, stride=2, padding=1, bias=False),
@@ -272,17 +278,17 @@ class HybridBackbone(nn.Module):
         self.stages = nn.ModuleList()
         in_c = stem_channels
 
-        for out_c, depth, expand, se_r, use_attn in zip(
-            channels_list, depths, expand_ratios, se_ratios, attn_stages
+        for out_c, depth, expand, se_r, use_attn, k in zip(
+            channels_list, depths, expand_ratios, se_ratios, attn_stages, kernel_sizes
         ):
             blocks = []
             for bi in range(depth):
                 stride = 2 if bi == 0 else 1
                 dp = dpr[dpr_idx]; dpr_idx += 1
                 if use_attn and bi == depth // 2:
-                    blocks.append(LitePSA(out_c, e=psa_ratio))
+                    blocks.append(LitePSA(out_c, e=psa_ratio, n=psa_blocks))
                 else:
-                    blocks.append(LiteBlock(in_c, out_c, 1, expand, se_r, dp, stride, reparam))
+                    blocks.append(LiteBlock(in_c, out_c, 1, expand, se_r, dp, stride, reparam, k))
                 in_c = out_c
             self.stages.append(nn.Sequential(*blocks))
 
@@ -310,26 +316,39 @@ class HybridBackbone(nn.Module):
 # ---------------------------------------------------------------------------
 
 class _LiteConvBlock(nn.Module):
-    """Depthwise separable conv 3x3 with residual."""
-    def __init__(self, c, c2=None, **kw):
+    """RepNCSPELAN4-style reparameterized depthwise block with residual.
+
+    With ``reparam=True`` the depthwise 3x3 is a RepDWConv (3x3+1x1+identity
+    branches fused to a single depthwise 3x3 at inference) — the depthwise
+    analogue of RepNCSPELAN4's VGGBlock 3x3+1x1 reparameterization.
+    """
+    def __init__(self, c, c2=None, reparam=True, **kw):
         super().__init__()
         c2 = c2 or c
-        self.conv = nn.Sequential(
-            nn.Conv2d(c, c, 3, padding=1, groups=c, bias=False),
-            nn.BatchNorm2d(c), nn.SiLU(inplace=True),
-            nn.Conv2d(c, c2, 1, bias=False),
-            nn.BatchNorm2d(c2), nn.SiLU(inplace=True),
-        )
+        if reparam:
+            self.conv = nn.Sequential(
+                RepDWConv(c, 3, 1, 1),
+                nn.SiLU(inplace=True),
+                nn.Conv2d(c, c2, 1, bias=False),
+                nn.BatchNorm2d(c2), nn.SiLU(inplace=True),
+            )
+        else:
+            self.conv = nn.Sequential(
+                nn.Conv2d(c, c, 3, padding=1, groups=c, bias=False),
+                nn.BatchNorm2d(c), nn.SiLU(inplace=True),
+                nn.Conv2d(c, c2, 1, bias=False),
+                nn.BatchNorm2d(c2), nn.SiLU(inplace=True),
+            )
     def forward(self, x):
         return self.conv(x) + x
 
 
 class _LiteDownBlock(nn.Module):
-    """Learnable stride-2 depthwise-separable downsampling."""
+    """SCDown-style learnable stride-2 depthwise-separable downsampling (5x5 dw)."""
     def __init__(self, c, **kw):
         super().__init__()
         self.conv = nn.Sequential(
-            nn.Conv2d(c, c, 3, stride=2, padding=1, groups=c, bias=False),
+            nn.Conv2d(c, c, 5, stride=2, padding=2, groups=c, bias=False),
             nn.BatchNorm2d(c), nn.SiLU(inplace=True),
             nn.Conv2d(c, c, 1, bias=False),
             nn.BatchNorm2d(c), nn.SiLU(inplace=True),
@@ -391,6 +410,7 @@ class LitePAFPN(nn.Module):
         num_blocks: int = 2,
         use_depthwise: bool = True,
         use_cross_fusion: bool = True,
+        reparam: bool = True,
     ):
         super().__init__()
         self.out_channels = c2
@@ -404,6 +424,7 @@ class LitePAFPN(nn.Module):
         self.num_blocks = num_blocks
         self.use_depthwise = use_depthwise
         self.use_cross_fusion = use_cross_fusion
+        self.reparam = reparam
 
     def _lazy_build(self, c_in_list):
         """Build sub-modules the first time we see real input channels."""
@@ -412,10 +433,15 @@ class LitePAFPN(nn.Module):
         self._built = True
         self._c_in = c_in_list
         c2 = self.out_channels
-        blk = _LiteConvBlock if self.use_depthwise else lambda c, c2=None: nn.Sequential(
-            nn.Conv2d(c, c2 or c, 3, padding=1, bias=False),
-            nn.BatchNorm2d(c2 or c), nn.SiLU(inplace=True),
-        )
+        reparam = self.reparam
+
+        def blk(c, c2=None):
+            if self.use_depthwise:
+                return _LiteConvBlock(c, c2, reparam=reparam)
+            return nn.Sequential(
+                nn.Conv2d(c, c2 or c, 3, padding=1, bias=False),
+                nn.BatchNorm2d(c2 or c), nn.SiLU(inplace=True),
+            )
 
         self.lateral_convs = nn.ModuleList()
         for c in c_in_list:
@@ -438,14 +464,14 @@ class LitePAFPN(nn.Module):
         reduced = [lat(f) for lat, f in zip(self.lateral_convs, inputs)]
 
         # Top-down (FPN)
-        laterals = [reduced[-1]]
+        laterals = [self.fpn_convs[-1](reduced[-1])]
         for i in range(self.num_levels - 2, -1, -1):
             up = F.interpolate(laterals[-1], size=reduced[i].shape[2:], mode="nearest")
             laterals.append(self.fpn_convs[i](reduced[i] + up))
         laterals = laterals[::-1]
 
         # Bottom-up (PAN)
-        outputs = [laterals[0]]
+        outputs = [self.pan_convs[0](laterals[0])]
         for i in range(1, self.num_levels):
             down = self.down_convs[i - 1](outputs[-1])
             outputs.append(self.pan_convs[i](laterals[i] + down))

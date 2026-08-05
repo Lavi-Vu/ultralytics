@@ -1094,10 +1094,13 @@ class LightEdgeDetModel(BaseModel):
             if isinstance(d.get("backbone_se_ratios"), list) else str(d.get("backbone_se_ratios", "[0.25,0.25,0.25,0.25,0.25]")),
             attn_stages=str(d.get("backbone_attn_stages", "[0,0,0,1,1]"))
             if isinstance(d.get("backbone_attn_stages"), list) else str(d.get("backbone_attn_stages", "[0,0,0,1,1]")),
+            kernel_sizes=str(d.get("backbone_kernel_sizes", "[3,3,3,3,3]"))
+            if isinstance(d.get("backbone_kernel_sizes"), list) else str(d.get("backbone_kernel_sizes", "[3,3,3,3,3]")),
             stem_channels=stem_ch,
             drop_path_rate=float(d.get("backbone_drop_path_rate", 0.1)),
             use_sppf=use_sppf,
             psa_ratio=float(d.get("backbone_psa_ratio", 0.5)),
+            psa_blocks=int(d.get("backbone_psa_blocks", 1)),
             reparam=bool(d.get("backbone_reparam", True)),
         )
 
@@ -1107,6 +1110,7 @@ class LightEdgeDetModel(BaseModel):
             c2=neck_out,
             num_blocks=max(1, int(round(d.get("neck_num_blocks", 2) * depth_mul))),
             use_cross_fusion=bool(d.get("neck_use_cross_fusion", True)),
+            reparam=bool(d.get("neck_reparam", True)),
         )
 
         # ---- head (per-scale Detect or light shared decoupled head) ----
@@ -1148,6 +1152,7 @@ class LightEdgeDetModel(BaseModel):
             dfl=d.get("dfl", 1.5),
             nbs=d.get("nbs", 64),
             image_weight=d.get("image_weight", 4.0),
+            dis=d.get("dis", 6.0),
            _hyp=d,
         )
 

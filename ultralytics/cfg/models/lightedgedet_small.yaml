@@ -16,15 +16,18 @@ backbone_depths: [2, 3, 4, 3, 2]
 backbone_expand_ratios: [2.5, 2.5, 3.0, 3.5, 4.0]
 backbone_se_ratios: [0.25, 0.25, 0.25, 0.25, 0.25]
 backbone_attn_stages: [0, 0, 0, 1, 1]
+backbone_kernel_sizes: [3, 3, 3, 7, 7]
 backbone_drop_path_rate: 0.1
 backbone_use_sppf: True
 backbone_psa_ratio: 0.5
+backbone_psa_blocks: 1
 backbone_reparam: True
 
-# Neck (LitePAFPN — stacked residual blocks + learnable downsampling + cross-scale fusion)
+# Neck (LitePAFPN — reparameterized residual blocks + learnable downsampling + cross-scale fusion)
 neck_out_channels: 128
 neck_num_blocks: 4
 neck_use_cross_fusion: True
+neck_reparam: True
 
 # Detect head (standard per-scale Detect, YOLO26 end-to-end recipe)
 head_type: standard

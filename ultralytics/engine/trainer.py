@@ -27,7 +27,7 @@ from torch import nn, optim
 from ultralytics import __version__
 from ultralytics.cfg import _YOLO_CLI_COMMAND, get_cfg, get_save_dir
 from ultralytics.data.utils import check_cls_dataset, check_det_dataset, convert_ndjson_to_yolo_if_needed
-from ultralytics.nn.distill_model import DistillationModel
+from ultralytics.nn.distill_model import DINOv3DistillationModel, DistillationModel
 from ultralytics.nn.tasks import load_checkpoint
 from ultralytics.optim import MuSGD
 from ultralytics.utils import (
@@ -307,7 +307,7 @@ class BaseTrainer:
 
         # Compile model (knowledge distillation runs the wrapped model eagerly and relies on
         # find_unused_parameters under DDP for the frozen teacher, so disable compilation when distilling)
-        if self.args.distill_model is not None and self.args.compile:
+        if self.args.distill_model is not None and getattr(self.args, "distill", False) and self.args.compile:
             LOGGER.warning("'compile' is not supported with knowledge distillation and will be disabled.")
             self.args.compile = False
         self.model = attempt_compile(self.model, device=self.device, mode=self.args.compile)
@@ -361,8 +361,18 @@ class BaseTrainer:
         self.stride = gs  # for multiscale training
 
         # resume training would directly load DistillationModel so check here
-        if self.args.distill_model is not None and not isinstance(unwrap_model(self.model), DistillationModel):
-            self.model = DistillationModel(student_model=self.model, teacher_model=self.args.distill_model)
+        if (
+            getattr(self.args, "distill", False)
+            and self.args.distill_model is not None
+            and not isinstance(unwrap_model(self.model), DistillationModel)
+        ):
+            if getattr(unwrap_model(self.model), "task", None) == "lightedgedet":
+                # LightEdgeDet backbones live outside self.model, so the YOLO-teacher
+                # DistillationModel layer hooks do not apply; use the DINOv3 feature
+                # distillation wrapper instead (RT-DETRv4 recipe).
+                self.model = DINOv3DistillationModel(student_model=self.model, teacher_model=self.args.distill_model)
+            else:
+                self.model = DistillationModel(student_model=self.model, teacher_model=self.args.distill_model)
         if self.world_size > 1:
             # static_graph=True permits params used >1 time per forward (e.g. flow_model in
             # o2m+o2o pose loss branches) under torch.compile.
@@ -795,14 +805,17 @@ class BaseTrainer:
             weights = None
 
         # rebuild DistillationModel from resuming checkpoint
-        if isinstance(weights, DistillationModel):
+        if isinstance(weights, (DistillationModel, DINOv3DistillationModel)):
             if RANK in {-1, 0}:
                 LOGGER.info("Resuming training DistillationModel from checkpoint weights")
             student_model = self.get_model(cfg=cfg, weights=weights.student_model, verbose=RANK in {-1, 0})
             student_model.args = self.args
             # teacher is stripped from the checkpoint to save memory/disk; rebuild it from the distill_model path
             teacher_model = weights.teacher_model if weights.teacher_model is not None else self.args.distill_model
-            model = DistillationModel(student_model=student_model, teacher_model=teacher_model)
+            if isinstance(weights, DINOv3DistillationModel):
+                model = DINOv3DistillationModel(student_model=student_model, teacher_model=teacher_model)
+            else:
+                model = DistillationModel(student_model=student_model, teacher_model=teacher_model)
             if getattr(weights, "projector", None) is not None:
                 model.projector.load_state_dict(weights.projector.state_dict())  # restore the trained projector
             model.criterion = None
