@@ -1,0 +1,40 @@
+# LightEdgeDet nano "slim + trim" variant.
+# Slim recipe (shared head, neck 80ch, head 56ch, 2 neck blocks) plus a backbone width trim:
+# deep stages narrowed (196/244 -> 192/224) and deep expand ratios lowered (3.5/4.0 -> 3.0),
+# which cuts most of the parameter count that lives in the wide deep stages.
+# Fused: ~4.54 GFLOPs / 2.56M params @ 640x640 — params close to YOLO26n (2.4M).
+
+nc: 80
+backbone_stem_channels: 20
+backbone_channels: [32, 64, 128, 192, 224]
+backbone_depths: [2, 3, 4, 3, 2]
+backbone_expand_ratios: [2.5, 2.5, 3.0, 3.0, 3.0]
+backbone_se_ratios: [0.25, 0.25, 0.25, 0.25, 0.25]
+backbone_attn_stages: [0, 0, 0, 1, 1]
+backbone_kernel_sizes: [3, 3, 3, 7, 7]
+backbone_drop_path_rate: 0.1
+backbone_use_sppf: True
+backbone_psa_ratio: 0.5
+backbone_psa_blocks: 1
+backbone_reparam: True
+neck_out_channels: 80
+neck_num_blocks: 2
+neck_use_cross_fusion: True
+neck_reparam: True
+head_type: shared
+head_channels: 56
+reg_max: 1
+strides: [8, 16, 32, 64]
+end2end: False
+dis: 6.0
+lr0: 0.001
+lrf: 0.01
+momentum: 0.9
+weight_decay: 0.05
+warmup_epochs: 3.0
+warmup_momentum: 0.8
+warmup_bias_lr: 0.1
+box: 7.5
+cls: 0.5
+dfl: 1.5
+nbs: 64

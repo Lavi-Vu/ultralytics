@@ -1,0 +1,41 @@
+# LightEdgeDet nano, end-to-end (NMS-free) variant.
+# Same backbone/neck as nano but end2end: True. The Detect head builds a one-to-one branch
+# supervised by E2ELoss (TopkAssigner, tal_topk=7/topk2=1); inference is NMS-free TopK.
+# Trade-off: the one2one head removes NMS (faster TensorRT path, RT-DETR-style comparison)
+# but the head is denser (one2many + one2one branches exist during training).
+# Fused @ 640x640: ~6.8 GFLOPs / 3.73M params (fuse() drops the one2many branch, keeps one2one).
+
+nc: 80
+backbone_stem_channels: 20
+backbone_channels: [37, 74, 140, 196, 244]
+backbone_depths: [2, 3, 4, 3, 2]
+backbone_expand_ratios: [2.5, 2.5, 3.0, 3.5, 4.0]
+backbone_se_ratios: [0.25, 0.25, 0.25, 0.25, 0.25]
+backbone_attn_stages: [0, 0, 0, 1, 1]
+backbone_kernel_sizes: [3, 3, 3, 7, 7]
+backbone_drop_path_rate: 0.1
+backbone_use_sppf: True
+backbone_psa_ratio: 0.5
+backbone_psa_blocks: 1
+backbone_reparam: True
+neck_out_channels: 104
+neck_num_blocks: 3
+neck_use_cross_fusion: True
+neck_reparam: True
+head_type: standard
+head_channels: 104
+reg_max: 1
+strides: [8, 16, 32, 64]
+end2end: True
+dis: 6.0
+lr0: 0.001
+lrf: 0.01
+momentum: 0.9
+weight_decay: 0.05
+warmup_epochs: 3.0
+warmup_momentum: 0.8
+warmup_bias_lr: 0.1
+box: 7.5
+cls: 0.5
+dfl: 1.5
+nbs: 64
