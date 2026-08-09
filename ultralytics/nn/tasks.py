@@ -1156,13 +1156,6 @@ class LightEdgeDetModel(BaseModel):
            _hyp=d,
         )
 
-        if verbose:
-            total_params = sum(p.numel() for p in self.parameters())
-            LOGGER.info(
-                f"LightEdgeDetModel: {total_params / 1e6:.2f}M params, "
-                f"nc={nc}, strides={strides}, neck_ch={neck_out}, end2end={end2end}"
-            )
-
         # Compute strides via dummy forward (required by Detect)
         s = 256  # 2x min stride
         self.detect.inplace = True
@@ -1177,6 +1170,13 @@ class LightEdgeDetModel(BaseModel):
         self.detect.stride = torch.tensor([s / f.shape[-2] for f in feats])
         self.stride = self.detect.stride
         self.train()
+
+        if verbose:
+            total_params = sum(p.numel() for p in self.parameters())
+            LOGGER.info(
+                f"LightEdgeDetModel: {total_params / 1e6:.2f}M params, "
+                f"nc={nc}, strides={strides}, neck_ch={neck_out}, end2end={end2end}"
+            )
         self.detect.bias_init()  # only run once
 
     @property

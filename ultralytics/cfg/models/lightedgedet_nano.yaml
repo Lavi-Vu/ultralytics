@@ -43,10 +43,10 @@ end2end: False
 dis: 6.0
 
 # Training defaults (ultralytics trainer reads these from here as fallback)
-lr0: 0.001
+lr0: 0.01
 lrf: 0.01
-momentum: 0.9
-weight_decay: 0.05
+momentum: 0.937
+weight_decay: 0.0005
 warmup_epochs: 3.0
 warmup_momentum: 0.8
 warmup_bias_lr: 0.1

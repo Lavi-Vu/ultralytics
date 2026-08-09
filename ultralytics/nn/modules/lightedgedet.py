@@ -485,12 +485,15 @@ class LitePAFPN(nn.Module):
 class LightDetectHead(Detect):
     """Lightweight decoupled detection head for LightEdgeDet.
 
-    Drops Detect's per-level 3x3 conv stacks in favor of a shared, depthwise-
-    separable decoupled head (matching the original LightEdgeDet design):
+    Slimmer than Detect's per-level 3x3 conv stacks (matching the original
+    LightEdgeDet design):
 
     - per-level 1x1 channel reduce (neck -> head_channels)
-    - ONE shared reg branch and ONE shared cls branch applied to every level
-    - branches are depthwise + pointwise convs (cheap, no dense 3x3)
+    - per-level regression branches (DWConv + pointwise, cheap, no dense 3x3)
+    - ONE shared classification branch applied to every level
+
+    Regression stays per-level because it gates the TAL positive assignment
+    (alignment = cls^alpha * IoU^beta); classification shares across scales.
 
     Shares Detect's forward/forward_head/_inference machinery, so v8DetectionLoss,
     validation, and export all work unchanged.
@@ -512,22 +515,22 @@ class LightDetectHead(Detect):
             for ci in ch
         )
 
-        # Single shared branches (depthwise-separable), applied to every level.
-        # cv2/cv3 are length-1 ModuleLists: ultralytics iterates them per level, but the
-        # SAME module runs on every level. Keeping one entry (not nl copies of the same
-        # object) stops thop/GFLOPs from counting the shared convs nl times.
-        shared_reg = nn.Sequential(
-            nn.Sequential(DWConv(c2, c2, 3), Conv(c2, c2, 1)),
-            nn.Sequential(DWConv(c2, c2, 3), Conv(c2, c2, 1)),
-            nn.Conv2d(c2, 4 * self.reg_max, 1),
-        )
-        shared_cls = nn.Sequential(
-            nn.Sequential(DWConv(c2, c2, 3), Conv(c2, c2, 1)),
-            nn.Sequential(DWConv(c2, c2, 3), Conv(c2, c2, 1)),
-            nn.Conv2d(c2, self.nc, 1),
-        )
-        self.cv2 = nn.ModuleList([shared_reg])
-        self.cv3 = nn.ModuleList([shared_cls])
+        # Box heads are per-level; classification is one shared branch applied to
+        # every level.  Box regression is scale-critical and gates the TAL positive
+        # assignment (alignment = cls^alpha * IoU^beta): a single branch shared across
+        # all 4 strides cannot regress reliably, so IoU stays low, few anchors are
+        # assigned positive and the classifier starves.  Giving each level its own
+        # small branch restores regression capacity while cls keeps the sharing
+        # savings.  cv2/cv3 are ModuleLists so ultralytics iterates them per level.
+        def _branch(out):
+            return nn.Sequential(
+                nn.Sequential(DWConv(c2, c2, 3), Conv(c2, c2, 1)),
+                nn.Sequential(DWConv(c2, c2, 3), Conv(c2, c2, 1)),
+                nn.Conv2d(c2, out, 1),
+            )
+
+        self.cv2 = nn.ModuleList([_branch(4 * self.reg_max) for _ in range(self.nl)])
+        self.cv3 = nn.ModuleList([_branch(self.nc)])
 
         if self._end2end:
             # One-to-one (E2E) branches, detached in Detect.forward; same shared design.
@@ -553,13 +556,13 @@ class LightDetectHead(Detect):
         return dict(boxes=boxes, scores=scores, feats=x)
 
     def bias_init(self):
-        """Initialize the shared head with a focal-loss prior (single value, no per-level split)."""
+        """Initialize the head with a focal-loss prior (per-level box, shared cls)."""
 
         def _init(box_head, cls_head):
-            reg_last = box_head[0][-1]
             cls_last = cls_head[0][-1]
-            reg_last.bias.data[:] = 2.0  # box
             cls_last.bias.data[: self.nc] = math.log(5 / self.nc / (640 / self.stride[0]) ** 2)
+            for bh in box_head:
+                bh[-1].bias.data[:] = 2.0  # box
 
         _init(self.cv2, self.cv3)
         if self._end2end:
