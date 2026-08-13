@@ -56,7 +56,7 @@ SOLUTION_MAP = {
 
 # Define valid tasks and modes
 MODES = frozenset({"train", "val", "predict", "export", "track", "benchmark"})
-TASKS = frozenset({"detect", "segment", "classify", "pose", "obb", "semantic", "depth"})
+TASKS = frozenset({"detect", "segment", "classify", "pose", "obb", "semantic", "depth", "lightedgedet"})
 TASK2DATA = {
     "detect": "coco8.yaml",
     "segment": "coco8-seg.yaml",
@@ -95,6 +95,7 @@ TASK2METRIC = {
     "obb": "metrics/mAP50-95(B)",
     "depth": "metrics/delta1",
     "semantic": "metrics/mIoU",
+    "lightedgedet": "metrics/mAP50-95(B)",
 }
 
 ARGV = sys.argv or ["", ""]  # sometimes sys.argv = []
