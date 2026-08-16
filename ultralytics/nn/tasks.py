@@ -116,6 +116,7 @@ from ultralytics.utils.torch_utils import (
     scale_img,
     smart_inference_mode,
     time_sync,
+    get_flops,
 )
 
 
@@ -1173,8 +1174,9 @@ class LightEdgeDetModel(BaseModel):
 
         if verbose:
             total_params = sum(p.numel() for p in self.parameters())
+            flops = get_flops(self)
             LOGGER.info(
-                f"LightEdgeDetModel: {total_params / 1e6:.2f}M params, "
+                f"LightEdgeDetModel: {total_params / 1e6:.2f}M params, {flops:.1f} GFLOPs, "
                 f"nc={nc}, strides={strides}, neck_ch={neck_out}, end2end={end2end}"
             )
         self.detect.bias_init()  # only run once
