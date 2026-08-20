@@ -1,0 +1,49 @@
+# LightEdgeDet Small V2 — ultralytics-compatible model config
+# Architecture: CNN stem + 5 LiteBlock stages (LitePSA attention on P3–P6)
+# + SPPF global context + LitePAFPN neck (cross-scale fusion) + per-scale Detect head.
+# V2 adds attention at P3/P4 (high-resolution stages) for a large FLOPs boost
+# at minimal param cost: ~10M params, ~25 GFLOPs (inference, fused).
+# Recipe: YOLO26 E2E (end-to-end, reg_max=1) + RT-DETRv4 cross-scale fusion in the neck.
+
+# Classification
+nc: 80
+
+# Backbone (HybridBackbone — 5 stages, outputs P3/P4/P5/P6)
+backbone_stem_channels: 34
+backbone_channels: [56, 112, 216, 304, 384]
+backbone_depths: [2, 3, 4, 3, 2]
+backbone_expand_ratios: [2.5, 2.5, 3.0, 3.5, 4.0]
+backbone_se_ratios: [0.25, 0.25, 0.25, 0.25, 0.25]
+backbone_attn_stages: [0, 1, 1, 1, 1]
+backbone_kernel_sizes: [3, 3, 3, 7, 7]
+backbone_drop_path_rate: 0.1
+backbone_use_sppf: True
+backbone_psa_ratio: 0.3
+backbone_psa_blocks: 1
+backbone_reparam: True
+
+# Neck (LitePAFPN — reparameterized residual blocks + learnable downsampling + cross-scale fusion)
+neck_out_channels: 224
+neck_num_blocks: 4
+neck_use_cross_fusion: True
+neck_reparam: True
+
+# Detect head (standard per-scale Detect, YOLO26 end-to-end recipe)
+head_type: standard
+head_channels: 224
+reg_max: 1
+strides: [8, 16, 32, 64]
+end2end: False
+
+# Training defaults (ultralytics trainer reads these from here as fallback)
+lr0: 0.01
+lrf: 0.01
+momentum: 0.937
+weight_decay: 0.0005
+warmup_epochs: 3.0
+warmup_momentum: 0.8
+warmup_bias_lr: 0.1
+box: 7.5
+cls: 0.5
+dfl: 1.5
+nbs: 64
