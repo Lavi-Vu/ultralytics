@@ -18,7 +18,7 @@ backbone_attn_stages: [0, 1, 1, 1, 1]
 backbone_kernel_sizes: [3, 3, 3, 7, 7]
 backbone_drop_path_rate: 0.1
 backbone_use_sppf: True
-backbone_psa_ratio: 0.3
+backbone_psa_ratio: 0.5
 backbone_psa_blocks: 1
 backbone_reparam: True
 
