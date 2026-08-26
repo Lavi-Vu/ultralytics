@@ -792,6 +792,8 @@ class BaseTrainer:
             (dict | None): Checkpoint to resume training from, or None if no checkpoint is loaded.
         """
         if isinstance(self.model, torch.nn.Module):  # if model is loaded beforehand. No setup needed
+            if RANK in {-1, 0} and hasattr(self.model, "yaml"):
+                YAML.save(self.save_dir / "model.yaml", self.model.yaml)
             return
 
         cfg, weights = self.model, None
@@ -822,6 +824,11 @@ class BaseTrainer:
             self.model = model
         else:
             self.model = self.get_model(cfg=cfg, weights=weights, verbose=RANK in {-1, 0})  # calls Model(cfg, weights)
+
+        # Save model architecture YAML alongside args.yaml
+        if RANK in {-1, 0} and hasattr(self.model, "yaml"):
+            YAML.save(self.save_dir / "model.yaml", self.model.yaml)
+
         return ckpt
 
     def optimizer_step(self):
