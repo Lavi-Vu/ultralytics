@@ -72,6 +72,12 @@ def build_arg_parser():
     p.add_argument("--project", default="runs/ablations", help="output dir for runs and configs")
     p.add_argument("--build-only", action="store_true", help="only build + profile each variant, no training")
     p.add_argument(
+        "--baseline-weights",
+        default=None,
+        help="existing trained baseline best.pt; when set, the 'full'/'baseline' "
+        "variant is profiled and validated against these weights WITHOUT retraining",
+    )
+    p.add_argument(
         "--ablate",
         nargs="+",
         action="append",
@@ -160,42 +166,51 @@ def profile_model(yaml_path: str | Path, imgsz: int):
 # ---------------------------------------------------------------------------
 
 
-def train_and_val(args, name: str, yaml_path: Path):
-    """Train a variant and return its COCO-style metrics dict."""
+def train_and_val(args, name: str, yaml_path: Path, weights: str | None = None):
+    """Train a variant (or reuse existing weights) and return its metrics dict.
+
+    If ``weights`` is given, training is skipped and the variant is validated
+    directly against that checkpoint (used for the already-trained baseline).
+    """
     from ultralytics import YOLO
 
-    train_kwargs = {
-        "data": args.data,
-        "epochs": args.epochs,
-        "imgsz": args.imgsz,
-        "device": args.device,
-        "project": args.project,
-        "name": name,
-        "exist_ok": True,
-        "verbose": not args.quiet,
-    }
-    if args.batch is not None:
-        train_kwargs["batch"] = args.batch
-    if args.workers is not None:
-        train_kwargs["workers"] = args.workers
+    if weights is not None:
+        print(f"    [reuse] skipping training, validating {weights}", flush=True)
+        best_pt = weights
+    else:
+        train_kwargs = {
+            "data": args.data,
+            "epochs": args.epochs,
+            "imgsz": args.imgsz,
+            "device": args.device,
+            "project": args.project,
+            "name": name,
+            "exist_ok": True,
+            "verbose": not args.quiet,
+        }
+        if args.batch is not None:
+            train_kwargs["batch"] = args.batch
+        if args.workers is not None:
+            train_kwargs["workers"] = args.workers
 
-    YOLO(str(yaml_path)).train(**train_kwargs)
+        YOLO(str(yaml_path)).train(**train_kwargs)
 
-    # Resolve the actual save dir the same way the trainer does (anchored on
-    # SETTINGS['runs_dir']): runs_dir / task / project / name.
-    from types import SimpleNamespace
+        # Resolve the actual save dir the same way the trainer does (anchored on
+        # SETTINGS['runs_dir']): runs_dir / task / project / name.
+        from types import SimpleNamespace
 
-    from ultralytics.engine.trainer import get_save_dir
+        from ultralytics.engine.trainer import get_save_dir
 
-    save_dir = get_save_dir(
-        SimpleNamespace(task="lightedgedet", project=args.project, name=name, mode="train", exist_ok=True)
-    )
-    best_pt = save_dir / "weights" / "best.pt"
-    if not best_pt.exists():
-        candidates = sorted(Path(args.project).glob(f"**/{name}/weights/best.pt"), key=lambda p: p.stat().st_mtime)
-        if not candidates:
-            raise FileNotFoundError(f"best.pt not found under {save_dir}")
-        best_pt = candidates[-1]
+        save_dir = get_save_dir(
+            SimpleNamespace(task="lightedgedet", project=args.project, name=name, mode="train", exist_ok=True)
+        )
+        best_pt = save_dir / "weights" / "best.pt"
+        if not best_pt.exists():
+            candidates = sorted(Path(args.project).glob(f"**/{name}/weights/best.pt"), key=lambda p: p.stat().st_mtime)
+            if not candidates:
+                raise FileNotFoundError(f"best.pt not found under {save_dir}")
+            best_pt = candidates[-1]
+
     metrics = YOLO(str(best_pt)).val(
         data=args.data,
         imgsz=args.imgsz,
@@ -241,7 +256,12 @@ def main():
             unfused, fused, gflops = profile_model(yaml_path, args.imgsz)
             print(f"  profile: {fused:.3f}M params fused ({unfused:.3f}M unfused), {gflops:.2f} GFLOPs", flush=True)
 
-            metrics = {} if args.build_only else train_and_val(args, name, yaml_path)
+            # the unchanged full/baseline variant reuses existing weights if provided
+            reuse = None
+            if args.baseline_weights and name in ("full", "baseline") and not overrides:
+                reuse = args.baseline_weights
+
+            metrics = {} if args.build_only else train_and_val(args, name, yaml_path, reuse)
             rows.append({"name": name, "params_M": fused, "unfused_M": unfused, "gflops": gflops, **metrics})
         except Exception as e:  # noqa: BLE001 - isolate failures so one variant never aborts the batch
             print(f"  FAILED: {e}", flush=True)
