@@ -30,10 +30,12 @@ from __future__ import annotations
 import argparse
 import ast
 import csv
+import gc
 import sys
 from pathlib import Path
 
 import yaml
+import torch
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -158,6 +160,10 @@ def profile_model(yaml_path: str | Path, imgsz: int):
     with torch.no_grad():
         macs, _ = profile(m, inputs=(torch.zeros(1, 3, imgsz, imgsz),), verbose=False)
     gflops = macs * 2 / 1e9
+    del m
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     return unfused, fused, gflops
 
 
@@ -172,6 +178,7 @@ def train_and_val(args, name: str, yaml_path: Path, weights: str | None = None):
     If ``weights`` is given, training is skipped and the variant is validated
     directly against that checkpoint (used for the already-trained baseline).
     """
+    import torch
     from ultralytics import YOLO
 
     if weights is not None:
@@ -193,7 +200,12 @@ def train_and_val(args, name: str, yaml_path: Path, weights: str | None = None):
         if args.workers is not None:
             train_kwargs["workers"] = args.workers
 
-        YOLO(str(yaml_path)).train(**train_kwargs)
+        train_model = YOLO(str(yaml_path))
+        train_model.train(**train_kwargs)
+        del train_model
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         # Resolve the actual save dir the same way the trainer does (anchored on
         # SETTINGS['runs_dir']): runs_dir / task / project / name.
@@ -211,14 +223,20 @@ def train_and_val(args, name: str, yaml_path: Path, weights: str | None = None):
                 raise FileNotFoundError(f"best.pt not found under {save_dir}")
             best_pt = candidates[-1]
 
-    metrics = YOLO(str(best_pt)).val(
+    model = YOLO(str(best_pt))
+    metrics = model.val(
         data=args.data,
         imgsz=args.imgsz,
         device=args.device,
         batch=args.batch or 16,
         verbose=False,
     )
-    return metrics.results_dict
+    results = metrics.results_dict
+    del model
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +284,10 @@ def main():
         except Exception as e:  # noqa: BLE001 - isolate failures so one variant never aborts the batch
             print(f"  FAILED: {e}", flush=True)
             rows.append({"name": name, "params_M": float("nan"), "unfused_M": float("nan"), "gflops": float("nan")})
+        finally:
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     # ---- report ----
     out = ["| variant | params(M) | unfused(M) | GFLOPs |"]
