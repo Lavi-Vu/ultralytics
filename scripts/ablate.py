@@ -5,6 +5,9 @@ Builds a baseline model from a YAML, applies named YAML-key overrides for each a
 variant, runs build + (optionally) train -> val + fused profile, and prints a markdown
 comparison table.
 
+Each training+validation variant runs in an isolated subprocess so the OS fully reclaims
+memory between variants — prevents OOM on memory-limited machines.
+
 Usage
 -----
 # Build-only (no GPU/dataset): prints fused params/GFLOPs for every variant
@@ -30,12 +33,13 @@ from __future__ import annotations
 import argparse
 import ast
 import csv
-import gc
+import json
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import yaml
-import torch
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -91,7 +95,7 @@ def build_arg_parser():
         nargs="+",
         action="append",
         metavar="key=value",
-        help="quick ablation: overrides, variant auto-named from keys (repeatable)",
+        help="quick ablation: overrides, auto-named from keys (repeatable)",
     )
     p.add_argument("--quiet", action="store_true", help="reduce trainer output")
     return p
@@ -136,19 +140,17 @@ def write_variant_yaml(base, overrides, cfg_dir: Path, name: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Profile
+# Profile (lightweight — only builds model, no training)
 # ---------------------------------------------------------------------------
 
 
 def profile_model(yaml_path: str | Path, imgsz: int):
     """Build + fuse + profile a variant.
 
-    Returns (unfused_M, fused_M, gflops). unfused_M is the training-time param count
-    (reparam branches present when backbone_reparam=True), fused_M is the deployment
-    count after fuse().
+    Returns (unfused_M, fused_M, gflops).
     """
     import torch
-    from thop import profile
+    from thop import profile as thop_profile
 
     from ultralytics.nn.tasks import LightEdgeDetModel
 
@@ -158,84 +160,137 @@ def profile_model(yaml_path: str | Path, imgsz: int):
     m.eval()
     fused = sum(p.numel() for p in m.parameters()) / 1e6
     with torch.no_grad():
-        macs, _ = profile(m, inputs=(torch.zeros(1, 3, imgsz, imgsz),), verbose=False)
+        macs, _ = thop_profile(m, inputs=(torch.zeros(1, 3, imgsz, imgsz),), verbose=False)
     gflops = macs * 2 / 1e9
     del m
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
     return unfused, fused, gflops
 
 
 # ---------------------------------------------------------------------------
-# Train + validate a variant
+# Subprocess worker: runs one variant's train + val in isolation
 # ---------------------------------------------------------------------------
 
+_WORKER_SCRIPT = """
+import json, sys, gc
 
-def train_and_val(args, name: str, yaml_path: Path, weights: str | None = None):
-    """Train a variant (or reuse existing weights) and return its metrics dict.
-
-    If ``weights`` is given, training is skipped and the variant is validated
-    directly against that checkpoint (used for the already-trained baseline).
-    """
+def run(args_json):
+    a = json.loads(args_json)
     import torch
     from ultralytics import YOLO
 
+    name = a["name"]
+    yaml_path = a["yaml_path"]
+    weights = a.get("weights")
+    data = a["data"]
+    epochs = a["epochs"]
+    imgsz = a["imgsz"]
+    batch = a["batch"]
+    workers = a["workers"]
+    device = a["device"]
+    project = a["project"]
+    quiet = a["quiet"]
+
+    # --- training ---
     if weights is not None:
         print(f"    [reuse] skipping training, validating {weights}", flush=True)
         best_pt = weights
     else:
-        train_kwargs = {
-            "data": args.data,
-            "epochs": args.epochs,
-            "imgsz": args.imgsz,
-            "device": args.device,
-            "project": args.project,
-            "name": name,
-            "exist_ok": True,
-            "verbose": not args.quiet,
-        }
-        if args.batch is not None:
-            train_kwargs["batch"] = args.batch
-        if args.workers is not None:
-            train_kwargs["workers"] = args.workers
+        train_kwargs = dict(
+            data=data, epochs=epochs, imgsz=imgsz, device=device,
+            project=project, name=name, exist_ok=True, verbose=not quiet,
+        )
+        if batch is not None:
+            train_kwargs["batch"] = batch
+        if workers is not None:
+            train_kwargs["workers"] = workers
 
-        train_model = YOLO(str(yaml_path))
-        train_model.train(**train_kwargs)
-        del train_model
+        m = YOLO(yaml_path)
+        m.train(**train_kwargs)
+        del m
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        # Resolve the actual save dir the same way the trainer does (anchored on
-        # SETTINGS['runs_dir']): runs_dir / task / project / name.
+        from pathlib import Path
         from types import SimpleNamespace
-
         from ultralytics.engine.trainer import get_save_dir
-
         save_dir = get_save_dir(
-            SimpleNamespace(task="lightedgedet", project=args.project, name=name, mode="train", exist_ok=True)
+            SimpleNamespace(task="lightedgedet", project=project, name=name, mode="train", exist_ok=True)
         )
-        best_pt = save_dir / "weights" / "best.pt"
-        if not best_pt.exists():
-            candidates = sorted(Path(args.project).glob(f"**/{name}/weights/best.pt"), key=lambda p: p.stat().st_mtime)
+        best_pt = str(save_dir / "weights" / "best.pt")
+        if not Path(best_pt).exists():
+            candidates = sorted(
+                Path(project).glob(f"**/{name}/weights/best.pt"),
+                key=lambda p: p.stat().st_mtime,
+            )
             if not candidates:
                 raise FileNotFoundError(f"best.pt not found under {save_dir}")
-            best_pt = candidates[-1]
+            best_pt = str(candidates[-1])
 
-    model = YOLO(str(best_pt))
-    metrics = model.val(
-        data=args.data,
-        imgsz=args.imgsz,
-        device=args.device,
-        batch=args.batch or 16,
-        verbose=False,
-    )
+    # --- validation ---
+    val_batch = batch if batch is not None else 16
+    model = YOLO(best_pt)
+    metrics = model.val(data=data, imgsz=imgsz, device=device,
+                        batch=val_batch, verbose=False)
     results = metrics.results_dict
     del model
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
+    return results
+
+if __name__ == "__main__":
+    args_json = sys.argv[1]
+    results = run(args_json)
+    json.dump(results, open(sys.argv[2], "w"))
+"""
+
+
+def train_and_val_subprocess(
+    name: str,
+    yaml_path: Path,
+    weights: str | None,
+    data: str | None,
+    epochs: int,
+    imgsz: int,
+    batch: int | None,
+    workers: int | None,
+    device: str,
+    project: str,
+    quiet: bool,
+) -> dict:
+    """Run one variant's train+val in a fresh subprocess; return metrics dict."""
+    payload = json.dumps({
+        "name": name,
+        "yaml_path": str(yaml_path),
+        "weights": weights,
+        "data": data,
+        "epochs": epochs,
+        "imgsz": imgsz,
+        "batch": batch,
+        "workers": workers,
+        "device": device,
+        "project": project,
+        "quiet": quiet,
+    })
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        result_path = f.name
+
+    # Write the worker script to a temp file so we don't rely on -c quoting
+    script_path = Path(tempfile.gettempdir()) / "ablate_worker.py"
+    script_path.write_text(_WORKER_SCRIPT)
+
+    proc = subprocess.run(
+        [sys.executable, str(script_path), payload, result_path],
+        capture_output=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"subprocess exited with code {proc.returncode}")
+
+    with open(result_path) as f:
+        results = json.load(f)
+    Path(result_path).unlink(missing_ok=True)
     return results
 
 
@@ -272,22 +327,36 @@ def main():
         try:
             yaml_path = write_variant_yaml(base, overrides, cfg_dir, name)
             unfused, fused, gflops = profile_model(yaml_path, args.imgsz)
-            print(f"  profile: {fused:.3f}M params fused ({unfused:.3f}M unfused), {gflops:.2f} GFLOPs", flush=True)
+            print(
+                f"  profile: {fused:.3f}M params fused "
+                f"({unfused:.3f}M unfused), {gflops:.2f} GFLOPs",
+                flush=True,
+            )
 
-            # the unchanged full/baseline variant reuses existing weights if provided
             reuse = None
             if args.baseline_weights and name in ("full", "baseline") and not overrides:
                 reuse = args.baseline_weights
 
-            metrics = {} if args.build_only else train_and_val(args, name, yaml_path, reuse)
+            if args.build_only:
+                metrics = {}
+            else:
+                metrics = train_and_val_subprocess(
+                    name=name,
+                    yaml_path=yaml_path,
+                    weights=reuse,
+                    data=args.data,
+                    epochs=args.epochs,
+                    imgsz=args.imgsz,
+                    batch=args.batch,
+                    workers=args.workers,
+                    device=args.device,
+                    project=args.project,
+                    quiet=args.quiet,
+                )
             rows.append({"name": name, "params_M": fused, "unfused_M": unfused, "gflops": gflops, **metrics})
-        except Exception as e:  # noqa: BLE001 - isolate failures so one variant never aborts the batch
+        except Exception as e:  # noqa: BLE001 - isolate failures
             print(f"  FAILED: {e}", flush=True)
             rows.append({"name": name, "params_M": float("nan"), "unfused_M": float("nan"), "gflops": float("nan")})
-        finally:
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
 
     # ---- report ----
     out = ["| variant | params(M) | unfused(M) | GFLOPs |"]
