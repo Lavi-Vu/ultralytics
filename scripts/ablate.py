@@ -260,38 +260,59 @@ def train_and_val_subprocess(
     project: str,
     quiet: bool,
 ) -> dict:
-    """Run one variant's train+val in a fresh subprocess; return metrics dict."""
-    payload = json.dumps({
-        "name": name,
-        "yaml_path": str(yaml_path),
-        "weights": weights,
-        "data": data,
-        "epochs": epochs,
-        "imgsz": imgsz,
-        "batch": batch,
-        "workers": workers,
-        "device": device,
-        "project": project,
-        "quiet": quiet,
-    })
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        result_path = f.name
+    """Run one variant's train+val in a fresh subprocess; return metrics dict.
 
-    # Write the worker script to a temp file so we don't rely on -c quoting
+    Auto-retries with halved batch on SIGKILL (-9) / SIGSEGV (-11) to handle OOM.
+    """
     script_path = Path(tempfile.gettempdir()) / "ablate_worker.py"
     script_path.write_text(_WORKER_SCRIPT)
 
-    proc = subprocess.run(
-        [sys.executable, str(script_path), payload, result_path],
-        capture_output=False,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(f"subprocess exited with code {proc.returncode}")
+    cur_batch = batch
+    max_retries = 4  # e.g. 16 -> 8 -> 4 -> 2
+    for attempt in range(max_retries + 1):
+        payload = json.dumps({
+            "name": name,
+            "yaml_path": str(yaml_path),
+            "weights": weights,
+            "data": data,
+            "epochs": epochs,
+            "imgsz": imgsz,
+            "batch": cur_batch,
+            "workers": workers,
+            "device": device,
+            "project": project,
+            "quiet": quiet,
+        })
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            result_path = f.name
 
-    with open(result_path) as f:
-        results = json.load(f)
-    Path(result_path).unlink(missing_ok=True)
-    return results
+        proc = subprocess.run(
+            [sys.executable, str(script_path), payload, result_path],
+            capture_output=False,
+        )
+
+        if proc.returncode == 0:
+            with open(result_path) as f:
+                results = json.load(f)
+            Path(result_path).unlink(missing_ok=True)
+            return results
+
+        Path(result_path).unlink(missing_ok=True)
+
+        # SIGKILL (-9) or SIGSEGV (-11) = OOM — halve batch and retry
+        if proc.returncode in (-9, -11):
+            effective = cur_batch or 16
+            new_batch = max(1, effective // 2)
+            if new_batch < effective and attempt < max_retries:
+                print(
+                    f"  OOM (code {proc.returncode}) at batch={effective}, "
+                    f"retrying with batch={new_batch}",
+                    flush=True,
+                )
+                cur_batch = new_batch
+                continue
+
+        raise RuntimeError(f"subprocess exited with code {proc.returncode}")
 
 
 # ---------------------------------------------------------------------------
