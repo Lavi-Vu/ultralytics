@@ -11,7 +11,7 @@ nc: 80
 
 # Backbone (HybridBackbone — 5 stages, outputs P3/P4/P5/P6)
 backbone_stem_channels: 36
-backbone_channels: [56, 142, 216, 368, 432]
+backbone_channels: [72, 144, 272, 368, 432]
 backbone_depths: [2, 3, 4, 3, 2]
 backbone_expand_ratios: [2.5, 2.5, 3.0, 3.5, 4.0]
 backbone_se_ratios: [0.25, 0.25, 0.25, 0.25, 0.25]
