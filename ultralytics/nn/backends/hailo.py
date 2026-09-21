@@ -70,8 +70,10 @@ class HailoBackend(BaseBackend):
             from ultralytics.nn.modules import DFL
 
             self._dfl = DFL()
-        # segmentation, pose and OBB return a dense tensor for the predictor's NMS; detect and classify do not
-        self.end2end = self.task not in {"segment", "pose", "obb"}
+        # Raw one-to-many detection heads need the predictor's NMS, unlike YOLO26's one-to-one heads.
+        self.end2end = self.task not in {"segment", "pose", "obb"} and (
+            self.metadata.get("output_type") != "raw_box_and_class_logits"
+        )
 
     def __del__(self):
         """Release the Hailo pipeline and device."""
@@ -82,7 +84,7 @@ class HailoBackend(BaseBackend):
         """Run Hailo inference and return decoded detections, or dense outputs and prototypes for segmentation."""
         im = np.ascontiguousarray(np.clip(im.permute(0, 2, 3, 1).cpu().numpy() * 255, 0, 255).astype(np.uint8))
         results = self.model.infer({self.input_info.name: im})
-        outputs = [results[x.name] for x in self.output_infos]
+        outputs = [results[name] for name in self.metadata.get("output_names", [x.name for x in self.output_infos])]
         if self.task == "segment":
             return self._decode_segment(outputs)
         if self.task == "pose":
@@ -173,8 +175,8 @@ class HailoBackend(BaseBackend):
         cls = torch.cat([m.flatten(2) for m in cls_maps], 2).transpose(1, 2)  # sigmoid baked in at export
         return torch.cat((boxes, cls, angle), 2).transpose(1, 2)
 
-    def _decode_raw(self, outputs: list[np.ndarray]) -> np.ndarray:
-        """Decode branch-first YOLO26 regression and class outputs."""
+    def _decode_raw(self, outputs: list[np.ndarray]) -> np.ndarray | torch.Tensor:
+        """Decode branch-first regression and logits into dense predictions or one-to-one detections."""
         from ultralytics.utils.tal import dist2bbox, make_anchors
 
         split = len(outputs) // 2
@@ -185,8 +187,10 @@ class HailoBackend(BaseBackend):
             self._anchors = make_anchors(box_maps, strides)
         anchors, stride_tensor = self._anchors
         boxes = torch.cat([x.flatten(2) for x in box_maps], 2).transpose(1, 2)
-        boxes = dist2bbox(boxes, anchors, xywh=False) * stride_tensor
+        boxes = dist2bbox(boxes, anchors, xywh=not self.end2end) * stride_tensor
         scores = torch.cat([x.flatten(2) for x in cls_maps], 2).transpose(1, 2).sigmoid()
+        if not self.end2end:
+            return torch.cat((boxes, scores), 2).transpose(1, 2)
         classes = scores.shape[2]
         anchor_index = scores.amax(-1).topk(min(300, scores.shape[1]), dim=1).indices[..., None]
         boxes = boxes.gather(1, anchor_index.repeat(1, 1, 4))

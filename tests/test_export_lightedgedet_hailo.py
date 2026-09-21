@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from scripts.export_lightedgedet_hailo import end_nodes
+from scripts.export_lightedgedet_hailo import end_nodes, output_names
 
 
 def graph_with(names):
@@ -22,3 +22,85 @@ def test_end_nodes_rejects_incompatible_head():
     """A different ONNX head must not produce a plausible but incorrect HEF."""
     with pytest.raises(ValueError, match="missing detection outputs"):
         end_nodes(graph_with([]), 4)
+
+
+@pytest.mark.parametrize("classes", [4, 80])
+@pytest.mark.parametrize("batch", [1, 2])
+def test_raw_forward_matches_detect_with_shuffled_streams(classes, batch):
+    """Named streams preserve roles even with identical channel counts and arbitrary runtime order."""
+    import numpy as np
+    import torch
+
+    from ultralytics.nn.backends.hailo import HailoBackend
+    from ultralytics.nn.modules.head import Detect
+
+    torch.manual_seed(0)
+    head = Detect(nc=classes, reg_max=1, end2end=False, ch=(16, 16, 16, 16)).eval()
+    head.stride = torch.tensor([8, 16, 32, 64])
+    boxes = [torch.rand(batch, 4, size, size) for size in (8, 4, 2, 1)]
+    scores = [torch.randn(batch, classes, size, size) for size in (8, 4, 2, 1)]
+    paired = [value for pair in zip(boxes, scores) for value in pair]
+    hn = {"name": "test", "layers": {f"test/output_layer{i}": {"input": [f"test/conv{i}"]} for i in range(1, 9)}}
+    results = {f"test/conv{i}": value.permute(0, 2, 3, 1).numpy() for i, value in enumerate(paired, 1)}
+    backend = HailoBackend.__new__(HailoBackend)
+    backend.metadata = {"output_names": output_names(hn)}
+    backend.task, backend.end2end, backend._anchors = "detect", False, None
+    backend.input_info = SimpleNamespace(name="input", shape=(64, 64, 3))
+    backend.output_infos = [SimpleNamespace(name=name) for name in reversed(results)]
+    backend.model = SimpleNamespace(infer=lambda inputs: results)
+    actual = backend.forward(torch.zeros(batch, 3, 64, 64))
+    expected = head._inference(
+        {
+            "boxes": torch.cat([x.flatten(2) for x in boxes], 2),
+            "scores": torch.cat([x.flatten(2) for x in scores], 2),
+            "feats": boxes,
+        }
+    )
+    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(backend.forward(torch.zeros(batch, 3, 64, 64)), expected)
+
+    # The existing YOLO26 branch still returns top-k xyxy/conf/class detections.
+    backend.end2end = True
+    decoded = backend._decode_raw([results[name] for name in output_names(hn)])
+    assert isinstance(decoded, np.ndarray)
+    assert decoded.shape == (batch, 300, 6)
+    assert np.all((decoded[..., 4] >= 0) & (decoded[..., 4] <= 1))
+
+
+@pytest.mark.parametrize("raw_lightedgedet", [False, True])
+def test_load_selects_host_nms_only_for_lightedgedet(tmp_path, monkeypatch, raw_lightedgedet):
+    """Metadata loading must not disable legacy YOLO26 top-k postprocessing."""
+    import sys
+    from contextlib import nullcontext
+
+    from ultralytics.nn.backends.hailo import HailoBackend
+    from ultralytics.utils import YAML
+
+    group = SimpleNamespace(activate=lambda _: nullcontext(), create_params=lambda: None)
+    device = SimpleNamespace(configure=lambda *_: [group])
+    hef = SimpleNamespace(
+        get_input_vstream_infos=lambda: [SimpleNamespace(shape=(640, 640, 3))],
+        get_output_vstream_infos=list,
+    )
+    params = SimpleNamespace(make=lambda *args, **kwargs: None)
+    monkeypatch.setitem(
+        sys.modules,
+        "hailo_platform",
+        SimpleNamespace(
+            HEF=lambda _: hef,
+            ConfigureParams=SimpleNamespace(create_from_hef=lambda *args, **kwargs: None),
+            FormatType=SimpleNamespace(UINT8=0, FLOAT32=1),
+            HailoStreamInterface=SimpleNamespace(PCIe=0),
+            InferVStreams=lambda *args: nullcontext(SimpleNamespace()),
+            InputVStreamParams=params,
+            OutputVStreamParams=params,
+            VDevice=lambda: nullcontext(device),
+        ),
+    )
+    (tmp_path / "model.hef").touch()
+    metadata = {"task": "detect", "nms": False}
+    if raw_lightedgedet:
+        metadata.update(output_type="raw_box_and_class_logits", end2end=False)
+    YAML.save(tmp_path / "metadata.yaml", metadata)
+    backend = HailoBackend(tmp_path, device="cpu")
+    assert backend.end2end is not raw_lightedgedet

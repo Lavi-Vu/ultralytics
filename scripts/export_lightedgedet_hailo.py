@@ -32,6 +32,12 @@ def end_nodes(model: onnx.ModelProto, levels: int) -> list[str]:
     return ends
 
 
+def output_names(hn: dict) -> list[str]:
+    """Bind HailoRT streams to branch-first decoder order using the parsed output-layer connections."""
+    paired = [hn["layers"][f"{hn['name']}/output_layer{i}"]["input"][0] for i in range(1, 9)]
+    return paired[::2] + paired[1::2]
+
+
 def parse_checkpoint(checkpoint: Path, output_dir: Path, imgsz: int) -> tuple[Path, Path]:
     """Export ONNX and parse its eight raw heads into a Hailo archive."""
     import onnx
@@ -157,7 +163,12 @@ def main() -> None:
                 "onnx": str(onnx_path),
                 "hef": str(hef_path),
                 "hailo_arch": "hailo8l",
-                "imgsz": args.imgsz,
+                "task": "detect",
+                "batch": 1,
+                "stride": 64,
+                "imgsz": [args.imgsz, args.imgsz],
+                "end2end": False,
+                "output_names": output_names(runner.get_hn_dict()),
                 "calibration_images": count,
                 "optimization_level": args.optimization_level,
                 "output_type": "raw_box_and_class_logits",
