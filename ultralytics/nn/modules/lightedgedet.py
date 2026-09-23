@@ -388,7 +388,8 @@ class CrossScaleFusion(nn.Module):
         fused = self.cv(stacked)
         B, C, H, W = fused.shape
         u = fused.permute(0, 2, 3, 1).reshape(B, H * W, C)
-        u = self.attn(self.norm(u), self.norm(u), self.norm(u), need_weights=False)[0]
+        norm_u = self.norm(u)
+        u = self.attn(norm_u, norm_u, norm_u, need_weights=False)[0]
         u = u.reshape(B, H, W, C).permute(0, 3, 1, 2)
         fused = fused + self.ffn(fused + u)
         gate = self.gate(F.adaptive_avg_pool2d(fused, 1))

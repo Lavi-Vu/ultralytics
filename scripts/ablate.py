@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import ast
 import csv
+import gc
 import json
 import math
 import re
@@ -153,6 +154,13 @@ def run_worker(payload_path: Path) -> None:
     for checkpoint in (run_dir / "weights/best.pt", run_dir / "weights/last.pt"):
         if not zipfile.is_zipfile(checkpoint):
             raise RuntimeError(f"missing or invalid checkpoint: {checkpoint}")
+
+    del model
+    import torch
+
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     metrics = (
         YOLO(str(run_dir / "weights/best.pt"))
