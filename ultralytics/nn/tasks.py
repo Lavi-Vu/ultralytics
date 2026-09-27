@@ -1234,6 +1234,11 @@ class LightEdgeDetModel(BaseModel):
                     m.conv = fuse_conv_and_bn(m.conv, m.bn)  # update conv
                     delattr(m, "bn")  # remove batchnorm
                     m.forward = m.forward_fuse  # update forward
+                if isinstance(m, nn.Sequential):
+                    for i in range(len(m) - 1):
+                        if isinstance(m[i], nn.Conv2d) and isinstance(m[i + 1], nn.BatchNorm2d):
+                            m[i] = fuse_conv_and_bn(m[i], m[i + 1])
+                            m[i + 1] = nn.Identity()
             self.info(verbose=verbose)
         return self
 

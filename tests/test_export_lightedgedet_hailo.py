@@ -24,6 +24,17 @@ def test_end_nodes_rejects_incompatible_head():
         end_nodes(graph_with([]), 4)
 
 
+def test_fuse_removes_lightedgedet_batch_norm():
+    """LightEdgeDet's custom backbone and neck must fuse their raw Conv-BatchNorm sequences."""
+    import torch
+
+    from ultralytics import YOLO
+
+    model = YOLO("ultralytics/cfg/models/lightedgedet_nano.yaml").model
+    model.fuse(verbose=False)
+    assert not any(isinstance(layer, torch.nn.BatchNorm2d) for layer in model.modules())
+
+
 @pytest.mark.parametrize("classes", [4, 80])
 @pytest.mark.parametrize("batch", [1, 2])
 def test_raw_forward_matches_detect_with_shuffled_streams(classes, batch):
