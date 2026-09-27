@@ -39,7 +39,7 @@ def output_names(hn: dict) -> list[str]:
     return paired[::2] + paired[1::2]
 
 
-def parse_checkpoint(checkpoint: Path, output_dir: Path, imgsz: int) -> tuple[Path, Path]:
+def parse_checkpoint(checkpoint: Path, output_dir: Path, imgsz: int) -> tuple[Path, Path, list[str]]:
     """Export ONNX and parse its eight raw heads into a Hailo archive."""
     import onnx
     from hailo_sdk_client import ClientRunner
@@ -67,10 +67,11 @@ def parse_checkpoint(checkpoint: Path, output_dir: Path, imgsz: int) -> tuple[Pa
         runner.translate_onnx_model(str(onnx_path), "lightedgedet", end_node_names=ends)
     finally:
         HailoNNFuser._handle_conv1x1_after_global_avgpool = original
+    stream_names = output_names(runner.get_hn_dict())
     har_path = output_dir / "lightedgedet_raw.har"
     runner.save_har(str(har_path))
     verify_native(graph, ends, runner, imgsz)
-    return har_path, onnx_path
+    return har_path, onnx_path, stream_names
 
 
 def verify_native(graph: onnx.ModelProto, ends: list[str], runner: ClientRunner, imgsz: int) -> None:
@@ -145,7 +146,7 @@ def main() -> None:
     hef_path = args.output_dir / "lightedgedet_hailo8l_raw.hef"
     if hef_path.exists():
         parser.error(f"refusing to overwrite {hef_path}")
-    har_path, onnx_path = parse_checkpoint(args.checkpoint, args.output_dir, args.imgsz)
+    har_path, onnx_path, stream_names = parse_checkpoint(args.checkpoint, args.output_dir, args.imgsz)
     dataset, count = calibration_dataset(args.checkpoint, args.data, args.imgsz, args.fraction)
     runner = ClientRunner(har=str(har_path))
     script = [
@@ -173,7 +174,7 @@ def main() -> None:
                 "stride": 64,
                 "imgsz": [args.imgsz, args.imgsz],
                 "end2end": False,
-                "output_names": output_names(runner.get_hn_dict()),
+                "output_names": stream_names,
                 "calibration_images": count,
                 "calibration_data": args.data,
                 "calibration_fraction": args.fraction,
