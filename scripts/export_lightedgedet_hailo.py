@@ -2,10 +2,10 @@
 
 The output has eight tensors (box and class logits for strides 8/16/32/64).
 Decode boxes and run NMS on the host; this is not a standard YOLOv8 NMS HEF.
-Level 0 is the default for memory-limited hosts; level 2 needs substantially more RAM.
+Level 2 is the default for accuracy; it needs substantially more RAM than level 0.
 
 Example:
-    python scripts/export_lightedgedet_hailo.py runs/train/weights/best.pt /path/to/calibration/images \
+    python scripts/export_lightedgedet_hailo.py runs/train/weights/best.pt path/to/dataset.yaml \
         --output-dir /path/to/export
 """
 
@@ -94,30 +94,30 @@ def verify_native(graph: onnx.ModelProto, ends: list[str], runner: ClientRunner,
     print(f"Native Hailo graph verified; maximum absolute error {max(errors):.6g}", flush=True)
 
 
-def calibration_dataset(directory: Path, imgsz: int, limit: int):
-    """Yield RGB letterboxed calibration images in the exporter's 0–255 range."""
-    import cv2
+def calibration_dataset(checkpoint: Path, data: str, imgsz: int, fraction: float):
+    """Build the same letterboxed BGR calibration dataset as Ultralytics' Hailo exporter."""
     import numpy as np
     import tensorflow as tf
 
-    from ultralytics.data.augment import LetterBox
+    from ultralytics import YOLO
+    from ultralytics.engine.exporter import Exporter
 
-    paths = sorted(path for path in directory.iterdir() if path.suffix.lower() in {".jpg", ".jpeg", ".png"})[:limit]
-    if not paths:
-        raise ValueError(f"no calibration images in {directory}")
-    letterbox = LetterBox(new_shape=(imgsz, imgsz))
+    model = YOLO(checkpoint).model
+    exporter = Exporter(overrides={"format": "hailo", "data": data, "imgsz": imgsz, "batch": 1, "fraction": fraction})
+    exporter.model, exporter.imgsz = model, [imgsz, imgsz]
+    dataloader = exporter.get_int8_calibration_dataloader()
+    count = len(dataloader.dataset)
 
     def images():
-        for path in paths:
-            image = cv2.imread(str(path))
-            if image is None:
-                raise ValueError(f"cannot read calibration image {path}")
-            yield cv2.cvtColor(letterbox(image=image), cv2.COLOR_BGR2RGB).astype(np.float32), {}
+        for batch in dataloader:
+            for image in batch["img"].permute(0, 2, 3, 1).numpy().astype(np.float32):
+                yield image, {}
 
     dataset = tf.data.Dataset.from_generator(
-        images, output_signature=(tf.TensorSpec(shape=(imgsz, imgsz, 3), dtype=tf.float32), {})
+        images,
+        output_signature=(tf.TensorSpec(shape=(imgsz, imgsz, model.yaml.get("channels", 3)), dtype=tf.float32), {}),
     )
-    return dataset.apply(tf.data.experimental.assert_cardinality(len(paths))), len(paths)
+    return dataset.apply(tf.data.experimental.assert_cardinality(count)), count
 
 
 def main() -> None:
@@ -129,11 +129,11 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("checkpoint", type=Path)
-    parser.add_argument("calibration_images", type=Path)
+    parser.add_argument("data", help="Dataset YAML used by Ultralytics for INT8 calibration.")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--imgsz", type=int, default=640)
-    parser.add_argument("--limit", type=int, default=128)
-    parser.add_argument("--optimization-level", type=int, default=0, choices=(0, 1, 2))
+    parser.add_argument("--fraction", type=float, default=1.0)
+    parser.add_argument("--optimization-level", type=int, default=2, choices=(0, 1, 2))
     args = parser.parse_args()
     if importlib.metadata.version("hailo-dataflow-compiler") != "3.34.0":
         parser.error("this LightEdgeDet parser workaround was validated only with Hailo DFC 3.34.0")
@@ -142,7 +142,7 @@ def main() -> None:
     if hef_path.exists():
         parser.error(f"refusing to overwrite {hef_path}")
     har_path, onnx_path = parse_checkpoint(args.checkpoint, args.output_dir, args.imgsz)
-    dataset, count = calibration_dataset(args.calibration_images, args.imgsz, args.limit)
+    dataset, count = calibration_dataset(args.checkpoint, args.data, args.imgsz, args.fraction)
     runner = ClientRunner(har=str(har_path))
     script = [
         "input_normalization = normalization([0, 0, 0], [255, 255, 255])",
@@ -170,6 +170,8 @@ def main() -> None:
                 "end2end": False,
                 "output_names": output_names(runner.get_hn_dict()),
                 "calibration_images": count,
+                "calibration_data": args.data,
+                "calibration_fraction": args.fraction,
                 "optimization_level": args.optimization_level,
                 "output_type": "raw_box_and_class_logits",
                 "strides": [8, 16, 32, 64],
