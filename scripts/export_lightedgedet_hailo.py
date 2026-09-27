@@ -2,7 +2,8 @@
 
 The output has eight tensors (box and class logits for strides 8/16/32/64).
 Decode boxes and run NMS on the host; this is not a standard YOLOv8 NMS HEF.
-Level 1 is the default because level-2 fine-tuning can exceed 32 GB of host RAM.
+Level 1 is the default because level-2 fine-tuning can exceed 32 GB of host RAM. Layer noise analysis is disabled
+because it is diagnostic-only and can exhaust memory on this graph.
 
 Example:
     python scripts/export_lightedgedet_hailo.py runs/train/weights/best.pt path/to/dataset.yaml \
@@ -150,6 +151,7 @@ def main() -> None:
     script = [
         "input_normalization = normalization([0, 0, 0], [255, 255, 255])",
         f"model_optimization_config(calibration, calibset_size={count})",
+        "model_optimization_config(checker_cfg, policy=disabled)",
         "pre_quantization_optimization(global_avgpool_reduction, layers=avgpool1, division_factors=[4, 4])",
         f"model_optimization_flavor(optimization_level={args.optimization_level})",
     ]
