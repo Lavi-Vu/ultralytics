@@ -2,7 +2,7 @@
 
 The output has eight tensors (box and class logits for strides 8/16/32/64).
 Decode boxes and run NMS on the host; this is not a standard YOLOv8 NMS HEF.
-Level 2 is the default for accuracy; it needs substantially more RAM than level 0.
+Level 1 is the default because level-2 fine-tuning can exceed 32 GB of host RAM.
 
 Example:
     python scripts/export_lightedgedet_hailo.py runs/train/weights/best.pt path/to/dataset.yaml \
@@ -133,8 +133,11 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--fraction", type=float, default=1.0)
-    parser.add_argument("--optimization-level", type=int, default=2, choices=(0, 1, 2))
+    parser.add_argument("--optimization-level", type=int, default=1, choices=(0, 1, 2))
+    parser.add_argument("--finetune", action="store_true", help="Enable Hailo's memory-intensive level-2 fine-tuning.")
     args = parser.parse_args()
+    if args.finetune and args.optimization_level != 2:
+        parser.error("--finetune requires --optimization-level 2")
     if importlib.metadata.version("hailo-dataflow-compiler") != "3.34.0":
         parser.error("this LightEdgeDet parser workaround was validated only with Hailo DFC 3.34.0")
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -150,7 +153,7 @@ def main() -> None:
         "pre_quantization_optimization(global_avgpool_reduction, layers=avgpool1, division_factors=[4, 4])",
         f"model_optimization_flavor(optimization_level={args.optimization_level})",
     ]
-    if args.optimization_level == 2:
+    if args.finetune:
         script.append(f"post_quantization_optimization(finetune, policy=enabled, dataset_size={count})")
     runner.load_model_script("\n".join(script))
     runner.optimize(dataset)
@@ -173,6 +176,7 @@ def main() -> None:
                 "calibration_data": args.data,
                 "calibration_fraction": args.fraction,
                 "optimization_level": args.optimization_level,
+                "finetune": args.finetune,
                 "output_type": "raw_box_and_class_logits",
                 "strides": [8, 16, 32, 64],
                 "reg_max": 1,
