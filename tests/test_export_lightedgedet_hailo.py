@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from ultralytics.engine.exporter import _hailo_lightedgedet_output_names
@@ -22,6 +23,16 @@ def test_output_names_orders_box_streams_before_class_streams():
     ]
 
 
+def test_quantized_hailo_outputs_dequantize_without_layout_changes():
+    """Raw Hailo streams are dequantized on the host after the smaller PCIe transfer."""
+    from ultralytics.nn.backends.hailo import HailoBackend
+
+    output = np.array([[[[0, 8], [16, 255]]]], dtype=np.uint8)
+    actual = HailoBackend._dequantize_output(output, (0.25, 8))
+    np.testing.assert_array_equal(actual, np.array([[[[-2, 0], [2, 61.75]]]], dtype=np.float32))
+    assert actual.shape == output.shape
+
+
 def test_fuse_removes_lightedgedet_batch_norm():
     """LightEdgeDet's custom backbone and neck must fuse their raw Conv-BatchNorm sequences."""
     import torch
@@ -37,7 +48,6 @@ def test_fuse_removes_lightedgedet_batch_norm():
 @pytest.mark.parametrize("batch", [1, 2])
 def test_raw_forward_matches_detect_with_shuffled_streams(classes, batch):
     """Named streams preserve roles even with identical channel counts and arbitrary runtime order."""
-    import numpy as np
     import torch
 
     from ultralytics.nn.backends.hailo import HailoBackend
@@ -54,6 +64,7 @@ def test_raw_forward_matches_detect_with_shuffled_streams(classes, batch):
     backend = HailoBackend.__new__(HailoBackend)
     backend.metadata = {"output_names": _hailo_lightedgedet_output_names(hn, 8)}
     backend.task, backend.end2end, backend._anchors = "detect", False, None
+    backend.output_quantized, backend.output_quant_params = False, {}
     backend.input_info = SimpleNamespace(name="input", shape=(64, 64, 3))
     backend.output_infos = [SimpleNamespace(name=name) for name in reversed(results)]
     backend.model = SimpleNamespace(infer=lambda inputs: results)

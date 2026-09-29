@@ -638,7 +638,9 @@ class Exporter:
             if lightedgedet and (
                 model.model[-1].reg_max != 1 or model.model[-1].nl != 4 or getattr(model, "end2end", False)
             ):
-                raise ValueError("Hailo export requires a non-end-to-end, four-level LightEdgeDet model with reg_max=1.")
+                raise ValueError(
+                    "Hailo export requires a non-end-to-end, four-level LightEdgeDet model with reg_max=1."
+                )
             if model.task == "semantic" and not family.startswith("yolo26"):
                 raise ValueError("Hailo export supports semantic segmentation only for YOLO26 models.")
             if self.args.end2end is not None:
@@ -1695,7 +1697,11 @@ class Exporter:
                     "nms": task == "detect" and not one2one,
                     "semantic_baked": task == "semantic" and head.bake_argmax,
                     **(
-                        {"output_type": "raw_box_and_class_logits", "output_names": output_names}
+                        {
+                            "output_type": "raw_box_and_class_logits",
+                            "output_names": output_names,
+                            "output_quantized": True,
+                        }
                         if lightedgedet
                         else {}
                     ),

@@ -56,13 +56,23 @@ class HailoBackend(BaseBackend):
         self.hef = HEF(str(hef_file))
         self.input_info = self.hef.get_input_vstream_infos()[0]
         self.output_infos = self.hef.get_output_vstream_infos()
+        self.output_quantized = self.metadata.get("output_quantized", False)
+        self.output_quant_params = (
+            {info.name: (info.quant_info.qp_scale, info.quant_info.qp_zp) for info in self.output_infos}
+            if self.output_quantized
+            else {}
+        )
         with ExitStack() as stack:
             target = stack.enter_context(VDevice())
             configure_params = ConfigureParams.create_from_hef(self.hef, interface=HailoStreamInterface.PCIe)
             network_group = target.configure(self.hef, configure_params)[0]
             stack.enter_context(network_group.activate(network_group.create_params()))
             input_params = InputVStreamParams.make(network_group, format_type=FormatType.UINT8)
-            output_params = OutputVStreamParams.make(network_group, format_type=FormatType.FLOAT32)
+            output_params = OutputVStreamParams.make(
+                network_group,
+                quantized=self.output_quantized,
+                format_type=FormatType.UINT8 if self.output_quantized else FormatType.FLOAT32,
+            )
             self.model = stack.enter_context(InferVStreams(network_group, input_params, output_params))
             self._stack = stack.pop_all()
         self._anchors = None
@@ -84,7 +94,12 @@ class HailoBackend(BaseBackend):
         """Run Hailo inference and return decoded detections, or dense outputs and prototypes for segmentation."""
         im = np.ascontiguousarray(np.clip(im.permute(0, 2, 3, 1).cpu().numpy() * 255, 0, 255).astype(np.uint8))
         results = self.model.infer({self.input_info.name: im})
-        outputs = [results[name] for name in self.metadata.get("output_names", [x.name for x in self.output_infos])]
+        names = self.metadata.get("output_names", [x.name for x in self.output_infos])
+        outputs = [results[name] for name in names]
+        if self.output_quantized:
+            outputs = [
+                self._dequantize_output(output, self.output_quant_params[name]) for output, name in zip(outputs, names)
+            ]
         if self.task == "segment":
             return self._decode_segment(outputs)
         if self.task == "pose":
@@ -102,6 +117,12 @@ class HailoBackend(BaseBackend):
             # bilinear upsample, letterbox removal, and class reduction so results match the PyTorch model exactly.
             return out.permute(0, 3, 1, 2)
         return self._decode_raw(outputs) if not self.metadata.get("nms", False) else self._decode_nms(outputs[0])
+
+    @staticmethod
+    def _dequantize_output(output: np.ndarray, quant_params: tuple[float, float]) -> np.ndarray:
+        """Convert a quantized HailoRT output to its floating-point tensor without changing its layout."""
+        scale, zero_point = quant_params
+        return (output.astype(np.float32) - zero_point) * scale
 
     def _decode_nms(self, output: list) -> np.ndarray:
         """Convert Hailo per-class NMS output from normalized ``yxyx`` to pixel ``xyxy`` coordinates."""
