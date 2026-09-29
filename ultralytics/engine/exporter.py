@@ -412,6 +412,17 @@ W8A16_FORMATS = frozenset(
 )  # INT8 weights + 16-bit activations (FP16; INT16 on LiteRT)
 W8A32_FORMATS = frozenset({"litert"})  # INT8 weights + FP32 activations (dynamic/weight-only INT8, no calibration)
 FP32_UNSUPPORTED_FORMATS = frozenset({"edgetpu", "imx", "rknn", "axelera", "deepx", "qnn", "hailo"})
+
+
+def _hailo_lightedgedet_output_names(hn: dict, output_count: int) -> list[str]:
+    """Return LightEdgeDet HailoRT streams in box-first, then class-first order."""
+    name, layers = hn["name"], hn["layers"]
+    streams = [layers[f"{name}/output_layer{i}"]["input"][0] for i in range(1, output_count + 1)]
+    if len(streams) != output_count or output_count % 2:
+        raise ValueError("LightEdgeDet Hailo export requires paired box and class output streams.")
+    return streams[::2] + streams[1::2]
+
+
 # (label, supporting formats) per quantize precision, used to list valid options in errors. 32/None (FP32) is universal except FP32_UNSUPPORTED_FORMATS.
 QUANTIZE_PRECISIONS = (
     ("16 (FP16)", FP16_FORMATS),
@@ -613,15 +624,21 @@ class Exporter:
             task26 = {Segment26: "segmentation", Pose26: "pose", OBB26: "OBB"}.get(type(model.model[-1]))
             if task26:
                 raise ValueError(f"Hailo export does not currently support YOLO26 {task26} models.")
+            lightedgedet = model.task == "lightedgedet" and isinstance(model.model[-1], Detect)
             if (
-                model.task not in {"detect", "segment", "pose", "obb", "classify", "semantic"}
+                (model.task not in {"detect", "segment", "pose", "obb", "classify", "semantic"} and not lightedgedet)
                 or type(model.model[-1]) not in {Detect, Segment, Pose, OBB, Classify, SemanticSegment}
-                or not family.startswith(("yolov8", "yolo11", "yolo26"))
+                or (not lightedgedet and not family.startswith(("yolov8", "yolo11", "yolo26")))
             ):
                 raise ValueError(
-                    "Hailo export currently supports YOLOv8/YOLO11/YOLO26 detection and classification models, "
+                    "Hailo export currently supports LightEdgeDet (reg_max=1) and YOLOv8/YOLO11/YOLO26 detection "
+                    "and classification models, "
                     "YOLOv8/YOLO11 segmentation, pose, and OBB models, and YOLO26 semantic segmentation models."
                 )
+            if lightedgedet and (
+                model.model[-1].reg_max != 1 or model.model[-1].nl != 4 or getattr(model, "end2end", False)
+            ):
+                raise ValueError("Hailo export requires a non-end-to-end, four-level LightEdgeDet model with reg_max=1.")
             if model.task == "semantic" and not family.startswith("yolo26"):
                 raise ValueError("Hailo export supports semantic segmentation only for YOLO26 models.")
             if self.args.end2end is not None:
@@ -632,6 +649,8 @@ class Exporter:
             hailo_archs = ("hailo8", "hailo8l", "hailo10h", "hailo15h", "hailo15l")
             if self.args.name not in hailo_archs:
                 raise ValueError(f"Invalid Hailo architecture '{self.args.name}'. Valid names are {hailo_archs}.")
+            if lightedgedet and self.args.name != "hailo8l":
+                raise ValueError("LightEdgeDet Hailo export is validated only for name='hailo8l'.")
         if fmt == "axelera":
             if model.task == "segment" and any(isinstance(m, Segment26) for m in model.modules()):
                 raise ValueError("Axelera export does not currently support YOLO26 segmentation models.")
@@ -1527,8 +1546,9 @@ class Exporter:
 
         calibration_dataloader = self.get_int8_calibration_dataloader(prefix)
         calibration_size = len(calibration_dataloader.dataset)
+        optimization_level = 1 if self.model.task == "lightedgedet" else 2
         LOGGER.warning(
-            f"\nHailo level-2 optimization will use {calibration_size} calibration images. "
+            f"\nHailo level-{optimization_level} optimization will use {calibration_size} calibration images. "
             "Hailo recommends at least 1,024 representative images for best accuracy. "
             'Pass data="path/to/dataset.yaml". '
             "See https://docs.ultralytics.com/integrations/hailo/#export-a-hailo-hef-model"
@@ -1537,7 +1557,12 @@ class Exporter:
         head = self.model.model[head_index]
         one2one = getattr(self.model, "end2end", False)
         task = self.model.task
-        if task == "classify":
+        lightedgedet = task == "lightedgedet"
+        if lightedgedet:
+            # LightEdgeDet predicts direct ltrb distances (reg_max=1), so HailoRT's YOLOv8 NMS cannot decode it.
+            # Keep its four box/class pairs raw and let the backend run the model's native decode plus predictor NMS.
+            end_nodes = [f"/detect/cv{branch}.{i}/cv{branch}.{i}.2/Conv" for i in range(head.nl) for branch in (2, 3)]
+        elif task == "classify":
             # The Classify head ends in Gemm -> Softmax; cut at the Softmax so the HEF returns the same
             # (1, nc) probabilities as the PyTorch model. The DFC translates the softmax to a native layer.
             end_nodes = [f"/model.{head_index}/Softmax"]
@@ -1578,16 +1603,36 @@ class Exporter:
         output_dir.mkdir(parents=True, exist_ok=True)
         try:
             runner = ClientRunner(hw_arch=self.args.name)
-            runner.translate_onnx_model(str(f_onnx), self.file.stem, end_node_names=end_nodes)
-            model_script = [
-                "normalization1 = normalization([0, 0, 0], [255, 255, 255])",
-                "model_optimization_flavor(optimization_level=2)",
-                f"post_quantization_optimization(finetune, policy=enabled, dataset_size={calibration_size})",
-            ]
+            if lightedgedet:
+                # DFC 3.34's optional SE/global-pool folding pass crashes on this graph. The parsed graph is verified
+                # by the compiler and needs no equivalent graph rewrite.
+                from hailo_sdk_client.model_translator.fuser.fuser import HailoNNFuser
+
+                original_fuser = HailoNNFuser._handle_conv1x1_after_global_avgpool
+                try:
+                    HailoNNFuser._handle_conv1x1_after_global_avgpool = lambda _: None
+                    runner.translate_onnx_model(str(f_onnx), self.file.stem, end_node_names=end_nodes)
+                finally:
+                    HailoNNFuser._handle_conv1x1_after_global_avgpool = original_fuser
+                output_names = _hailo_lightedgedet_output_names(runner.get_hn_dict(), len(end_nodes))
+                model_script = [
+                    "normalization1 = normalization([0, 0, 0], [255, 255, 255])",
+                    f"model_optimization_config(calibration, calibset_size={calibration_size})",
+                    "model_optimization_config(checker_cfg, policy=disabled)",
+                    "pre_quantization_optimization(global_avgpool_reduction, layers=avgpool1, division_factors=[4, 4])",
+                    "model_optimization_flavor(optimization_level=1)",
+                ]
+            else:
+                runner.translate_onnx_model(str(f_onnx), self.file.stem, end_node_names=end_nodes)
+                model_script = [
+                    "normalization1 = normalization([0, 0, 0], [255, 255, 255])",
+                    "model_optimization_flavor(optimization_level=2)",
+                    f"post_quantization_optimization(finetune, policy=enabled, dataset_size={calibration_size})",
+                ]
             if one2one:
                 outputs = ", ".join(f"output_layer{i + 1}" for i in range(len(end_nodes)))
                 model_script.append(f"quantization_param([{outputs}], precision_mode=a16_w16)")
-            elif task in {"classify", "semantic"}:
+            elif lightedgedet or task in {"classify", "semantic"}:
                 pass  # softmax/class-map is already the graph output; no NMS or activation changes needed
             else:
                 outputs = [layer.inputs[0].rsplit("/", 1)[-1] for layer in runner.get_hn_model().get_output_layers()]
@@ -1649,6 +1694,11 @@ class Exporter:
                     "hailo_arch": self.args.name,
                     "nms": task == "detect" and not one2one,
                     "semantic_baked": task == "semantic" and head.bake_argmax,
+                    **(
+                        {"output_type": "raw_box_and_class_logits", "output_names": output_names}
+                        if lightedgedet
+                        else {}
+                    ),
                 },
             )
             return str(output_dir)

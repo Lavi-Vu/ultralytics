@@ -4,24 +4,22 @@ from types import SimpleNamespace
 
 import pytest
 
-from scripts.export_lightedgedet_hailo import end_nodes, output_names
+from ultralytics.engine.exporter import _hailo_lightedgedet_output_names
 
 
-def graph_with(names):
-    """Build a minimal graph-like object for output selection."""
-    return SimpleNamespace(graph=SimpleNamespace(node=[SimpleNamespace(name=name) for name in names]))
-
-
-def test_end_nodes_selects_box_class_pairs_in_stride_order():
-    """The Hailo outputs must remain paired for host-side decoding."""
-    expected = [f"/detect/cv{branch}.{scale}/cv{branch}.{scale}.2/Conv" for scale in range(4) for branch in (2, 3)]
-    assert end_nodes(graph_with(reversed(expected)), 4) == expected
-
-
-def test_end_nodes_rejects_incompatible_head():
-    """A different ONNX head must not produce a plausible but incorrect HEF."""
-    with pytest.raises(ValueError, match="missing detection outputs"):
-        end_nodes(graph_with([]), 4)
+def test_output_names_orders_box_streams_before_class_streams():
+    """Hailo streams must stay paired for host-side LightEdgeDet decoding."""
+    hn = {"name": "test", "layers": {f"test/output_layer{i}": {"input": [f"test/conv{i}"]} for i in range(1, 9)}}
+    assert _hailo_lightedgedet_output_names(hn, 8) == [
+        "test/conv1",
+        "test/conv3",
+        "test/conv5",
+        "test/conv7",
+        "test/conv2",
+        "test/conv4",
+        "test/conv6",
+        "test/conv8",
+    ]
 
 
 def test_fuse_removes_lightedgedet_batch_norm():
@@ -54,7 +52,7 @@ def test_raw_forward_matches_detect_with_shuffled_streams(classes, batch):
     hn = {"name": "test", "layers": {f"test/output_layer{i}": {"input": [f"test/conv{i}"]} for i in range(1, 9)}}
     results = {f"test/conv{i}": value.permute(0, 2, 3, 1).numpy() for i, value in enumerate(paired, 1)}
     backend = HailoBackend.__new__(HailoBackend)
-    backend.metadata = {"output_names": output_names(hn)}
+    backend.metadata = {"output_names": _hailo_lightedgedet_output_names(hn, 8)}
     backend.task, backend.end2end, backend._anchors = "detect", False, None
     backend.input_info = SimpleNamespace(name="input", shape=(64, 64, 3))
     backend.output_infos = [SimpleNamespace(name=name) for name in reversed(results)]
@@ -72,7 +70,7 @@ def test_raw_forward_matches_detect_with_shuffled_streams(classes, batch):
 
     # The existing YOLO26 branch still returns top-k xyxy/conf/class detections.
     backend.end2end = True
-    decoded = backend._decode_raw([results[name] for name in output_names(hn)])
+    decoded = backend._decode_raw([results[name] for name in _hailo_lightedgedet_output_names(hn, 8)])
     assert isinstance(decoded, np.ndarray)
     assert decoded.shape == (batch, 300, 6)
     assert np.all((decoded[..., 4] >= 0) & (decoded[..., 4] <= 1))
@@ -109,7 +107,7 @@ def test_load_selects_host_nms_only_for_lightedgedet(tmp_path, monkeypatch, raw_
         ),
     )
     (tmp_path / "model.hef").touch()
-    metadata = {"task": "detect", "nms": False}
+    metadata = {"task": "lightedgedet" if raw_lightedgedet else "detect", "nms": False}
     if raw_lightedgedet:
         metadata.update(output_type="raw_box_and_class_logits", end2end=False)
     YAML.save(tmp_path / "metadata.yaml", metadata)

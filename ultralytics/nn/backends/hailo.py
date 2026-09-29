@@ -47,9 +47,9 @@ class HailoBackend(BaseBackend):
             from ultralytics.utils import YAML
 
             self.apply_metadata(YAML.load(metadata_file))
-        if self.task and self.task not in {"detect", "segment", "pose", "obb", "classify", "semantic"}:
+        if self.task and self.task not in {"detect", "lightedgedet", "segment", "pose", "obb", "classify", "semantic"}:
             raise ValueError(
-                f"Hailo inference only supports detect, segment, pose, obb, classify and semantic tasks, "
+                f"Hailo inference only supports detect, lightedgedet, segment, pose, obb, classify and semantic tasks, "
                 f"not task='{self.task}'."
             )
 

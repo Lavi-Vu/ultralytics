@@ -100,11 +100,12 @@ model.export(format="hailo", name="hailo8l", imgsz=640)
 
 ## Supported Models and Hardware
 
-The Hailo ecosystem covers a broad range of computer vision workloads, but the Ultralytics `format="hailo"` exporter currently validates standard YOLO detection, segmentation, pose, OBB, classification, and semantic segmentation heads. The task table describes the available exporter paths; hardware validation is listed separately below.
+The Hailo ecosystem covers a broad range of computer vision workloads, but the Ultralytics `format="hailo"` exporter currently validates standard YOLO detection, LightEdgeDet, segmentation, pose, OBB, classification, and semantic segmentation heads. The task table describes the available exporter paths; hardware validation is listed separately below.
 
 | Ultralytics task          | Direct Hailo export | Supported model families | Notes                                                                                        |
 | :------------------------ | :-----------------: | :----------------------- | :------------------------------------------------------------------------------------------- |
 | Object detection          |         ✅          | YOLOv8, YOLO11, YOLO26   | Standard Ultralytics `Detect` heads, including custom models                                 |
+| Object detection          |         ✅          | LightEdgeDet             | Four raw box/class pairs decoded by Ultralytics; NMS runs on the host                        |
 | Instance segmentation     |         ✅          | YOLOv8, YOLO11           | Raw head tensors decoded by Ultralytics at inference; YOLO26-seg is not currently supported  |
 | Image classification      |         ✅          | YOLOv8, YOLO11, YOLO26   | Softmax runs on chip; the HEF returns class probabilities directly                           |
 | Pose estimation           |         ✅          | YOLOv8, YOLO11           | Raw head tensors decoded by Ultralytics at inference; YOLO26-pose is not currently supported |
@@ -117,6 +118,7 @@ Specialized detection families such as YOLOv10, YOLO-World, YOLOE, and RT-DETR a
 | :----------------------------------- | :----------------: | :-----------------: | :------------------------------------------------------------ |
 | YOLOv8 / YOLO11 detection            |         ✅         |         ✅          | HEF with HailoRT YOLO NMS                                     |
 | YOLO26 detection                     |         ✅         |         ✅          | NMS-free detection-head outputs for supported runtimes        |
+| LightEdgeDet (four-level, reg_max=1) | Hailo-8L validated |    Not validated    | Raw heads, host decode, and NMS                                |
 | YOLOv8-seg / YOLO11-seg              |         ✅         |         ✅          | Raw segmentation tensors, decoded by Ultralytics at inference |
 | YOLOv8-pose / YOLO11-pose            | Hailo-8L validated |    Not validated    | Raw pose tensors, decoded by Ultralytics at inference         |
 | YOLOv8-obb / YOLO11-obb              | Hailo-8L validated |    Not validated    | Raw OBB tensors, decoded by Ultralytics at inference          |
