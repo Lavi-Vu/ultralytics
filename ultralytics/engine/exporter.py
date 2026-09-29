@@ -1597,7 +1597,7 @@ class Exporter:
                 end_nodes = [
                     f"/model.{head_index}/cv{branch}.{i}/cv{branch}.{i}.2/Conv" for i in scales for branch in (2, 3)
                 ]
-        self.args.opset = 11
+        self.args.opset = 14 if lightedgedet else 11
         f_onnx = Path(self.export_onnx())
         output_dir = self.file.parent / f"{self.file.stem}_hailo_model"
         if output_dir.exists():
@@ -1618,11 +1618,13 @@ class Exporter:
                     HailoNNFuser._handle_conv1x1_after_global_avgpool = original_fuser
                 output_names = _hailo_lightedgedet_output_names(runner.get_hn_dict(), len(end_nodes))
                 model_script = [
-                    "normalization1 = normalization([0, 0, 0], [255, 255, 255])",
+                    "input_normalization = normalization([0, 0, 0], [255, 255, 255])",
                     f"model_optimization_config(calibration, calibset_size={calibration_size})",
                     "model_optimization_config(checker_cfg, policy=disabled)",
                     "pre_quantization_optimization(global_avgpool_reduction, layers=avgpool1, division_factors=[4, 4])",
                     "model_optimization_flavor(optimization_level=1)",
+                    "post_quantization_optimization(bias_correction, policy=disabled)",
+                    "performance_param(compiler_optimization_level=max)",
                 ]
             else:
                 runner.translate_onnx_model(str(f_onnx), self.file.stem, end_node_names=end_nodes)
