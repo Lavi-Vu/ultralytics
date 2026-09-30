@@ -1623,6 +1623,7 @@ class Exporter:
                     "model_optimization_config(checker_cfg, policy=disabled)",
                     "pre_quantization_optimization(global_avgpool_reduction, layers=avgpool1, division_factors=[4, 4])",
                     "model_optimization_flavor(optimization_level=2)",
+                    f"post_quantization_optimization(finetune, policy=enabled, dataset_size={calibration_size})",
                     "post_quantization_optimization(bias_correction, policy=disabled)",
                     "performance_param(compiler_optimization_level=max)",
                 ]
