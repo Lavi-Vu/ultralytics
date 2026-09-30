@@ -1548,7 +1548,7 @@ class Exporter:
 
         calibration_dataloader = self.get_int8_calibration_dataloader(prefix)
         calibration_size = len(calibration_dataloader.dataset)
-        optimization_level = 1 if self.model.task == "lightedgedet" else 2
+        optimization_level = 2
         LOGGER.warning(
             f"\nHailo level-{optimization_level} optimization will use {calibration_size} calibration images. "
             "Hailo recommends at least 1,024 representative images for best accuracy. "
