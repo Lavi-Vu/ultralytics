@@ -25,6 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("weights", type=Path, help="LightEdgeDet .pt checkpoint")
     parser.add_argument("--data", type=Path, required=True, help="Dataset YAML used for representative calibration images")
+    parser.add_argument("--dataset-root", type=Path, help="Resolved dataset root; required when YAML uses a relative path")
     parser.add_argument("--imgsz", type=int, default=640, help="Square Hailo input resolution")
     parser.add_argument("--calib-size", type=int, default=1024, help="Number of representative calibration images")
     parser.add_argument("--arch", default="hailo8l", choices=("hailo8", "hailo8l"), help="Target Hailo architecture")
@@ -36,11 +37,19 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def dataset_images(data_file: Path, calibration_size: int) -> list[Path]:
+def dataset_images(data_file: Path, calibration_size: int, dataset_root: Path | None = None) -> list[Path]:
     """Return evenly distributed validation images resolved from an Ultralytics dataset YAML."""
     data = yaml.safe_load(data_file.read_text())
-    root = Path(data.get("path", ""))
-    root = root if root.is_absolute() else (data_file.parent / root).resolve()
+    yaml_root = Path(data.get("path", ""))
+    candidates = [dataset_root] if dataset_root else []
+    if yaml_root.is_absolute():
+        candidates.append(yaml_root)
+    else:
+        candidates.extend((data_file.parent / yaml_root, Path.cwd().parent / "datasets" / yaml_root, Path.home() / "datasets" / yaml_root))
+    root = next((path.resolve() for path in candidates if path and path.is_dir()), None)
+    if root is None:
+        tried = ", ".join(str(path) for path in candidates if path)
+        raise FileNotFoundError(f"Dataset root does not exist. Pass --dataset-root. Tried: {tried}")
     source = data.get("val") or data.get("train")
     if not source:
         raise ValueError(f"Dataset YAML has neither 'val' nor 'train': {data_file}")
@@ -50,7 +59,11 @@ def dataset_images(data_file: Path, calibration_size: int) -> list[Path]:
         path = Path(item)
         path = path if path.is_absolute() else root / path
         if path.is_file() and path.suffix.lower() == ".txt":
-            images.extend(Path(x.strip()) for x in path.read_text().splitlines() if x.strip())
+            images.extend(
+                (Path(x.strip()) if Path(x.strip()).is_absolute() else path.parent / x.strip())
+                for x in path.read_text().splitlines()
+                if x.strip()
+            )
         elif path.is_dir():
             images.extend(p for p in path.rglob("*") if p.suffix.lower() in {".bmp", ".jpeg", ".jpg", ".png"})
     images = sorted(p.resolve() for p in images if p.is_file())
@@ -131,7 +144,7 @@ def main() -> None:
         HailoNNFuser._handle_conv1x1_after_global_avgpool = original_fuser
     output_layers = [layer.inputs[0].rsplit("/", 1)[-1] for layer in runner.get_hn_model().get_output_layers()]
 
-    images = dataset_images(args.data, args.calib_size)
+    images = dataset_images(args.data, args.calib_size, args.dataset_root)
     model_script = [
         "input_normalization = normalization([0, 0, 0], [255, 255, 255])",
         f"model_optimization_config(calibration, calibset_size={len(images)})",
