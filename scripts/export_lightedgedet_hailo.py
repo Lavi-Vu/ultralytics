@@ -10,6 +10,7 @@ Example:
 from __future__ import annotations
 
 import argparse
+import inspect
 import shutil
 from pathlib import Path
 
@@ -77,6 +78,7 @@ def letterbox_rgb(path: Path, size: int) -> np.ndarray:
 def export_onnx(model: torch.nn.Module, output: Path, size: int) -> None:
     """Export the model graph directly to ONNX at opset 14 for attention compatibility."""
     image = torch.zeros(1, 3, size, size)
+    kwargs = {"dynamo": False} if "dynamo" in inspect.signature(torch.onnx.export).parameters else {}
     torch.onnx.export(
         model,
         image,
@@ -86,6 +88,7 @@ def export_onnx(model: torch.nn.Module, output: Path, size: int) -> None:
         output_names=["output0"],
         dynamic_axes=None,
         do_constant_folding=True,
+        **kwargs,
     )
 
 
