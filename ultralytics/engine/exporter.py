@@ -1617,6 +1617,7 @@ class Exporter:
                 finally:
                     HailoNNFuser._handle_conv1x1_after_global_avgpool = original_fuser
                 output_names = _hailo_lightedgedet_output_names(runner.get_hn_dict(), len(end_nodes))
+                output_layers = [layer.inputs[0].rsplit("/", 1)[-1] for layer in runner.get_hn_model().get_output_layers()]
                 model_script = [
                     "input_normalization = normalization([0, 0, 0], [255, 255, 255])",
                     f"model_optimization_config(calibration, calibset_size={calibration_size})",
@@ -1626,6 +1627,9 @@ class Exporter:
                     "post_quantization_optimization(finetune, policy=disabled)",
                     "performance_param(compiler_optimization_level=max)",
                 ]
+                model_script.extend(
+                    f"change_output_activation({output_layers[i]}, sigmoid)" for i in range(1, len(output_layers), 2)
+                )
             else:
                 runner.translate_onnx_model(str(f_onnx), self.file.stem, end_node_names=end_nodes)
                 model_script = [
@@ -1701,6 +1705,7 @@ class Exporter:
                     **(
                         {
                             "output_type": "raw_box_and_class_logits",
+                            "class_activation": "sigmoid",
                             "output_names": output_names,
                             "output_quantized": True,
                         }

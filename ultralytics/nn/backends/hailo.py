@@ -100,6 +100,8 @@ class HailoBackend(BaseBackend):
             outputs = [
                 self._dequantize_output(output, self.output_quant_params[name]) for output, name in zip(outputs, names)
             ]
+        if self.task == "lightedgedet":
+            outputs = self._order_lightedgedet_outputs(outputs)
         if self.task == "segment":
             return self._decode_segment(outputs)
         if self.task == "pose":
@@ -123,6 +125,15 @@ class HailoBackend(BaseBackend):
         """Convert a quantized HailoRT output to its floating-point tensor without changing its layout."""
         scale, zero_point = quant_params
         return (output.astype(np.float32) - zero_point) * scale
+
+    @staticmethod
+    def _order_lightedgedet_outputs(outputs: list[np.ndarray]) -> list[np.ndarray]:
+        """Order raw LightEdgeDet streams as box maps followed by class maps, largest scale first."""
+        boxes = sorted((x for x in outputs if x.shape[-1] == 4), key=lambda x: x.shape[-3] * x.shape[-2], reverse=True)
+        classes = sorted((x for x in outputs if x.shape[-1] != 4), key=lambda x: x.shape[-3] * x.shape[-2], reverse=True)
+        if len(boxes) != len(classes):
+            raise ValueError("LightEdgeDet Hailo output streams must contain paired 4-channel box and class maps.")
+        return boxes + classes
 
     def _decode_nms(self, output: list) -> np.ndarray:
         """Convert Hailo per-class NMS output from normalized ``yxyx`` to pixel ``xyxy`` coordinates."""
@@ -209,7 +220,9 @@ class HailoBackend(BaseBackend):
         anchors, stride_tensor = self._anchors
         boxes = torch.cat([x.flatten(2) for x in box_maps], 2).transpose(1, 2)
         boxes = dist2bbox(boxes, anchors, xywh=not self.end2end) * stride_tensor
-        scores = torch.cat([x.flatten(2) for x in cls_maps], 2).transpose(1, 2).sigmoid()
+        scores = torch.cat([x.flatten(2) for x in cls_maps], 2).transpose(1, 2)
+        if self.metadata.get("class_activation") != "sigmoid":
+            scores = scores.sigmoid()
         if not self.end2end:
             return torch.cat((boxes, scores), 2).transpose(1, 2)
         classes = scores.shape[2]
