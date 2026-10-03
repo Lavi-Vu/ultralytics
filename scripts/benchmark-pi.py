@@ -54,6 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True, help="Image used for every timed inference")
     parser.add_argument("--onnx-640", type=Path, help="640x640 ONNX model")
+    parser.add_argument("--onnx-512", type=Path, help="512x512 ONNX model")
     parser.add_argument("--ncnn-640", type=Path, help="640x640 NCNN model directory")
     parser.add_argument("--ncnn-512", type=Path, help="512x512 NCNN model directory")
     parser.add_argument("--hailo-640", type=Path, help="640x640 Hailo model directory")
@@ -160,14 +161,15 @@ def benchmark_specs(args: argparse.Namespace) -> list[BenchmarkSpec]:
     """Build the requested benchmark configurations."""
     values = (
         ("Raspberry Pi 5", "ONNX", 640, args.onnx_640),
+        ("Raspberry Pi 5", "ONNX", 512, args.onnx_512),
         ("Raspberry Pi 5", "NCNN", 640, args.ncnn_640),
         ("Raspberry Pi 5", "NCNN", 512, args.ncnn_512),
         ("Raspberry Pi 5 + Hailo-8L", "HailoRT INT8", 640, args.hailo_640),
         ("Raspberry Pi 5 + Hailo-8L", "HailoRT INT8", 512, args.hailo_512),
     )
-    options = ("--onnx-640", "--ncnn-640", "--ncnn-512", "--hailo-640", "--hailo-512")
+    options = ("--onnx-640", "--onnx-512", "--ncnn-640", "--ncnn-512", "--hailo-640", "--hailo-512")
     if args.skip_hailo:
-        values, options = values[:3], options[:3]
+        values, options = values[:4], options[:4]
     missing = [option for option, value in zip(options, (x[3] for x in values)) if value is None]
     if missing:
         raise SystemExit(f"Missing required model paths: {', '.join(missing)}")
