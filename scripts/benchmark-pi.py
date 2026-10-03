@@ -58,6 +58,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ncnn-512", type=Path, help="512x512 NCNN model directory")
     parser.add_argument("--hailo-640", type=Path, help="640x640 Hailo model directory")
     parser.add_argument("--hailo-512", type=Path, help="512x512 Hailo model directory")
+    parser.add_argument("--skip-hailo", action="store_true", help="Skip both HailoRT benchmark configurations")
     parser.add_argument("--warmup", type=int, default=5, help="Warmup iterations per model")
     parser.add_argument("--iterations", type=int, default=50, help="Measured iterations per model")
     parser.add_argument("--conf", type=float, default=0.25, help="Prediction confidence threshold")
@@ -156,7 +157,7 @@ def run_worker(args: argparse.Namespace, spec: BenchmarkSpec) -> BenchmarkResult
 
 
 def benchmark_specs(args: argparse.Namespace) -> list[BenchmarkSpec]:
-    """Build the five requested benchmark configurations."""
+    """Build the requested benchmark configurations."""
     values = (
         ("Raspberry Pi 5", "ONNX", 640, args.onnx_640),
         ("Raspberry Pi 5", "NCNN", 640, args.ncnn_640),
@@ -164,13 +165,10 @@ def benchmark_specs(args: argparse.Namespace) -> list[BenchmarkSpec]:
         ("Raspberry Pi 5 + Hailo-8L", "HailoRT INT8", 640, args.hailo_640),
         ("Raspberry Pi 5 + Hailo-8L", "HailoRT INT8", 512, args.hailo_512),
     )
-    missing = [
-        option
-        for option, value in zip(
-            ("--onnx-640", "--ncnn-640", "--ncnn-512", "--hailo-640", "--hailo-512"), (x[3] for x in values)
-        )
-        if value is None
-    ]
+    options = ("--onnx-640", "--ncnn-640", "--ncnn-512", "--hailo-640", "--hailo-512")
+    if args.skip_hailo:
+        values, options = values[:3], options[:3]
+    missing = [option for option, value in zip(options, (x[3] for x in values)) if value is None]
     if missing:
         raise SystemExit(f"Missing required model paths: {', '.join(missing)}")
     return [BenchmarkSpec(platform, runtime, size, str(model)) for platform, runtime, size, model in values]
