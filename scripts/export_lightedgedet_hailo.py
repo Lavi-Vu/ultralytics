@@ -24,8 +24,12 @@ def parse_args() -> argparse.Namespace:
     """Parse standalone Hailo export options."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("weights", type=Path, help="LightEdgeDet .pt checkpoint")
-    parser.add_argument("--data", type=Path, required=True, help="Dataset YAML used for representative calibration images")
-    parser.add_argument("--dataset-root", type=Path, help="Resolved dataset root; required when YAML uses a relative path")
+    parser.add_argument(
+        "--data", type=Path, required=True, help="Dataset YAML used for representative calibration images"
+    )
+    parser.add_argument(
+        "--dataset-root", type=Path, help="Resolved dataset root; required when YAML uses a relative path"
+    )
     parser.add_argument("--imgsz", type=int, default=640, help="Square Hailo input resolution")
     parser.add_argument("--calib-size", type=int, default=1024, help="Number of representative calibration images")
     parser.add_argument("--arch", default="hailo8l", choices=("hailo8", "hailo8l"), help="Target Hailo architecture")
@@ -45,7 +49,13 @@ def dataset_images(data_file: Path, calibration_size: int, dataset_root: Path | 
     if yaml_root.is_absolute():
         candidates.append(yaml_root)
     else:
-        candidates.extend((data_file.parent / yaml_root, Path.cwd().parent / "datasets" / yaml_root, Path.home() / "datasets" / yaml_root))
+        candidates.extend(
+            (
+                data_file.parent / yaml_root,
+                Path.cwd().parent / "datasets" / yaml_root,
+                Path.home() / "datasets" / yaml_root,
+            )
+        )
     root = next((path.resolve() for path in candidates if path and path.is_dir()), None)
     if root is None:
         tried = ", ".join(str(path) for path in candidates if path)
@@ -112,9 +122,12 @@ def main() -> None:
         import tensorflow as tf
         from hailo_sdk_client import ClientRunner
         from hailo_sdk_client.model_translator.fuser.fuser import HailoNNFuser
+
         from ultralytics import YOLO
     except ImportError as e:
-        raise SystemExit("Install Ultralytics, TensorFlow, and the Hailo Dataflow Compiler before running this script.") from e
+        raise SystemExit(
+            "Install Ultralytics, TensorFlow, and the Hailo Dataflow Compiler before running this script."
+        ) from e
 
     yolo = YOLO(args.weights)
     if yolo.task != "lightedgedet":
@@ -132,9 +145,8 @@ def main() -> None:
     onnx_file = output_dir / f"{args.weights.stem}.onnx"
     export_onnx(model, onnx_file, args.imgsz)
 
-    end_nodes = [
-        f"/detect/cv{branch}.{level}/cv{branch}.{level}.2/Conv" for branch in (2, 3) for level in range(4)
-    ]
+    # Keep each scale's box/class outputs adjacent; class activations below select the odd entries.
+    end_nodes = [f"/detect/cv{branch}.{level}/cv{branch}.{level}.2/Conv" for level in range(4) for branch in (2, 3)]
     runner = ClientRunner(hw_arch=args.arch)
     original_fuser = HailoNNFuser._handle_conv1x1_after_global_avgpool
     try:
@@ -162,7 +174,9 @@ def main() -> None:
         )
     else:
         model_script.append("post_quantization_optimization(finetune, policy=disabled)")
-    model_script.extend(f"change_output_activation({output_layers[i]}, sigmoid)" for i in range(1, len(output_layers), 2))
+    model_script.extend(
+        f"change_output_activation({output_layers[i]}, sigmoid)" for i in range(1, len(output_layers), 2)
+    )
     runner.load_model_script("\n".join(model_script))
 
     def calibration_dataset():
