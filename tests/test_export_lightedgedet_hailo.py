@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from ultralytics.engine.exporter import _hailo_lightedgedet_output_names
+from ultralytics.engine.exporter import _hailo_lightedgedet_fusion_layers, _hailo_lightedgedet_output_names
 
 
 def test_output_names_orders_box_streams_before_class_streams():
@@ -20,6 +20,20 @@ def test_output_names_orders_box_streams_before_class_streams():
         "test/conv4",
         "test/conv6",
         "test/conv8",
+    ]
+
+
+def test_fusion_layers_are_selected_by_original_graph_identity():
+    """Fusion precision must not depend on numeric Hailo layer names or dictionary order."""
+    layers = {
+        "test/random": {"original_names": ["/backbone/Mul_1"]},
+        **{f"test/compiler_name_{i}": {"original_names": [f"/neck/fusion/Mul_{i}"]} for i in (3, 1, 4, 2)},
+    }
+    assert _hailo_lightedgedet_fusion_layers({"layers": layers}) == [
+        "compiler_name_3",
+        "compiler_name_1",
+        "compiler_name_4",
+        "compiler_name_2",
     ]
 
 

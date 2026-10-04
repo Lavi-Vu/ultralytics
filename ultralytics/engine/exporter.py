@@ -423,6 +423,19 @@ def _hailo_lightedgedet_output_names(hn: dict, output_count: int) -> list[str]:
     return streams[::2] + streams[1::2]
 
 
+def _hailo_lightedgedet_fusion_layers(hn: dict) -> list[str]:
+    """Return the four accuracy-sensitive LightEdgeDet multi-scale fusion layers."""
+    targets = {f"/neck/fusion/Mul_{i}" for i in range(1, 5)}
+    layers = [
+        name.rsplit("/", 1)[-1]
+        for name, config in hn["layers"].items()
+        if targets.intersection(config.get("original_names", ()))
+    ]
+    if len(layers) != len(targets):
+        raise ValueError("LightEdgeDet Hailo export requires four multi-scale fusion multiplication layers.")
+    return layers
+
+
 # (label, supporting formats) per quantize precision, used to list valid options in errors. 32/None (FP32) is universal except FP32_UNSUPPORTED_FORMATS.
 QUANTIZE_PRECISIONS = (
     ("16 (FP16)", FP16_FORMATS),
@@ -1616,7 +1629,9 @@ class Exporter:
                     runner.translate_onnx_model(str(f_onnx), self.file.stem, end_node_names=end_nodes)
                 finally:
                     HailoNNFuser._handle_conv1x1_after_global_avgpool = original_fuser
-                output_names = _hailo_lightedgedet_output_names(runner.get_hn_dict(), len(end_nodes))
+                hn = runner.get_hn_dict()
+                output_names = _hailo_lightedgedet_output_names(hn, len(end_nodes))
+                fusion_layers = _hailo_lightedgedet_fusion_layers(hn)
                 output_layers = [
                     layer.inputs[0].rsplit("/", 1)[-1] for layer in runner.get_hn_model().get_output_layers()
                 ]
@@ -1628,6 +1643,7 @@ class Exporter:
                     "model_optimization_flavor(optimization_level=2)",
                     "post_quantization_optimization(finetune, policy=disabled)",
                     "performance_param(compiler_optimization_level=max)",
+                    f"quantization_param([{', '.join(fusion_layers)}], precision_mode=a16_w16)",
                 ]
                 model_script.extend(
                     f"change_output_activation({output_layers[i]}, sigmoid)" for i in range(1, len(output_layers), 2)

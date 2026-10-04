@@ -124,6 +124,7 @@ def main() -> None:
         from hailo_sdk_client.model_translator.fuser.fuser import HailoNNFuser
 
         from ultralytics import YOLO
+        from ultralytics.engine.exporter import _hailo_lightedgedet_fusion_layers
     except ImportError as e:
         raise SystemExit(
             "Install Ultralytics, TensorFlow, and the Hailo Dataflow Compiler before running this script."
@@ -154,6 +155,7 @@ def main() -> None:
         runner.translate_onnx_model(str(onnx_file), args.weights.stem, end_node_names=end_nodes)
     finally:
         HailoNNFuser._handle_conv1x1_after_global_avgpool = original_fuser
+    fusion_layers = _hailo_lightedgedet_fusion_layers(runner.get_hn_dict())
     output_layers = [layer.inputs[0].rsplit("/", 1)[-1] for layer in runner.get_hn_model().get_output_layers()]
 
     images = dataset_images(args.data, args.calib_size, args.dataset_root)
@@ -164,6 +166,7 @@ def main() -> None:
         "pre_quantization_optimization(global_avgpool_reduction, layers=avgpool1, division_factors=[4, 4])",
         "model_optimization_flavor(optimization_level=2)",
         "performance_param(compiler_optimization_level=max)",
+        f"quantization_param([{', '.join(fusion_layers)}], precision_mode=a16_w16)",
     ]
     if args.bias_correction:
         model_script.append("post_quantization_optimization(bias_correction, policy=enabled)")
