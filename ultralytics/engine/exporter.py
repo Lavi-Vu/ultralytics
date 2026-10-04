@@ -425,13 +425,18 @@ def _hailo_lightedgedet_output_names(hn: dict, output_count: int) -> list[str]:
 
 def _hailo_lightedgedet_fusion_layers(hn: dict) -> list[str]:
     """Return the four accuracy-sensitive LightEdgeDet multi-scale fusion layers."""
-    targets = {f"/neck/fusion/Mul_{i}" for i in range(1, 5)}
+    prefix = "/neck/fusion/Mul"
+
+    def is_fusion_multiply(original_name: str) -> bool:
+        suffix = original_name.removeprefix(prefix)
+        return original_name.startswith(prefix) and (not suffix or (suffix.startswith("_") and suffix[1:].isdigit()))
+
     layers = [
         name.rsplit("/", 1)[-1]
         for name, config in hn["layers"].items()
-        if targets.intersection(config.get("original_names", ()))
+        if any(is_fusion_multiply(original_name) for original_name in config.get("original_names", ()))
     ]
-    if len(layers) != len(targets):
+    if len(layers) != 4:
         raise ValueError("LightEdgeDet Hailo export requires four multi-scale fusion multiplication layers.")
     return layers
 
