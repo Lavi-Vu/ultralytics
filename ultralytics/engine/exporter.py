@@ -1632,8 +1632,6 @@ class Exporter:
                 model_script.extend(
                     f"change_output_activation({output_layers[i]}, sigmoid)" for i in range(1, len(output_layers), 2)
                 )
-                class_outputs = ", ".join(f"output_layer{i + 1}" for i in range(1, len(output_layers), 2))
-                model_script.append(f"quantization_param([{class_outputs}], precision_mode=a16_w16)")
             else:
                 runner.translate_onnx_model(str(f_onnx), self.file.stem, end_node_names=end_nodes)
                 model_script = [
@@ -1711,7 +1709,7 @@ class Exporter:
                             "output_type": "raw_box_and_class_logits",
                             "class_activation": "sigmoid",
                             "output_names": output_names,
-                            "output_quantized": False,
+                            "output_quantized": True,
                         }
                         if lightedgedet
                         else {}

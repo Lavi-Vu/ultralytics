@@ -177,8 +177,6 @@ def main() -> None:
     model_script.extend(
         f"change_output_activation({output_layers[i]}, sigmoid)" for i in range(1, len(output_layers), 2)
     )
-    class_outputs = ", ".join(f"output_layer{i + 1}" for i in range(1, len(output_layers), 2))
-    model_script.append(f"quantization_param([{class_outputs}], precision_mode=a16_w16)")
     runner.load_model_script("\n".join(model_script))
 
     def calibration_dataset():
