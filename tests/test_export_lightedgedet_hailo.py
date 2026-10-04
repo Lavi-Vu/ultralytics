@@ -23,16 +23,14 @@ def test_output_names_orders_box_streams_before_class_streams():
     ]
 
 
-@pytest.mark.parametrize("indices", [(1, 2, 3, 4), (None, 1, 2, 3)])
-def test_fusion_layers_are_selected_by_original_graph_identity(indices):
-    """Fusion precision must not depend on numeric Hailo layer names or dictionary order."""
+def test_fusion_layers_are_selected_by_graph_structure():
+    """Fusion precision must not depend on compiler layer or ONNX node names."""
     layers = {
-        "test/random": {"original_names": ["/backbone/Mul_1"]},
-        "test/nested": {"original_names": ["/neck/fusion/attn/Mul_1"]},
-        **{
-            f"test/compiler_name_{i}": {"original_names": [f"/neck/fusion/Mul{f'_{index}' if index else ''}"]}
-            for i, index in enumerate(indices)
-        },
+        "test/add": {"type": "ew_add"},
+        "test/depthwise": {"type": "dw"},
+        "test/resize": {"type": "resize"},
+        "test/backbone_multiply": {"type": "ew_mult", "input": ["test/depthwise", "test/resize"]},
+        **{f"test/compiler_name_{i}": {"type": "ew_mult", "input": ["test/add", "test/resize"]} for i in range(4)},
     }
     assert _hailo_lightedgedet_fusion_layers({"layers": layers}) == [
         "compiler_name_0",
