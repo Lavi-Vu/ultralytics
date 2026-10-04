@@ -79,7 +79,7 @@ def test_raw_forward_matches_detect_with_shuffled_streams(classes, batch):
     hn = {"name": "test", "layers": {f"test/output_layer{i}": {"input": [f"test/conv{i}"]} for i in range(1, 9)}}
     results = {f"test/conv{i}": value.permute(0, 2, 3, 1).numpy() for i, value in enumerate(paired, 1)}
     backend = HailoBackend.__new__(HailoBackend)
-    backend.metadata = {"output_names": _hailo_lightedgedet_output_names(hn, 8)}
+    backend.metadata = {"output_names": _hailo_lightedgedet_output_names(hn, 8), "class_activation": "raw"}
     backend.task, backend.end2end, backend._anchors = "detect", False, None
     backend.output_quantized, backend.output_quant_params = False, {}
     backend.input_info = SimpleNamespace(name="input", shape=(64, 64, 3))

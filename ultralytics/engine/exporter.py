@@ -1633,9 +1633,6 @@ class Exporter:
                 hn = runner.get_hn_dict()
                 output_names = _hailo_lightedgedet_output_names(hn, len(end_nodes))
                 fusion_layers = _hailo_lightedgedet_fusion_layers(hn)
-                output_layers = [
-                    layer.inputs[0].rsplit("/", 1)[-1] for layer in runner.get_hn_model().get_output_layers()
-                ]
                 model_script = [
                     "input_normalization = normalization([0, 0, 0], [255, 255, 255])",
                     f"model_optimization_config(calibration, calibset_size={calibration_size})",
@@ -1646,9 +1643,6 @@ class Exporter:
                     "performance_param(compiler_optimization_level=max)",
                     f"quantization_param([{', '.join(fusion_layers)}], precision_mode=a16_w16)",
                 ]
-                model_script.extend(
-                    f"change_output_activation({output_layers[i]}, sigmoid)" for i in range(1, len(output_layers), 2)
-                )
             else:
                 runner.translate_onnx_model(str(f_onnx), self.file.stem, end_node_names=end_nodes)
                 model_script = [
@@ -1724,7 +1718,7 @@ class Exporter:
                     **(
                         {
                             "output_type": "raw_box_and_class_logits",
-                            "class_activation": "sigmoid",
+                            "class_activation": "raw",
                             "output_names": output_names,
                             "output_quantized": True,
                         }

@@ -169,7 +169,6 @@ def main() -> None:
     finally:
         HailoNNFuser._handle_conv1x1_after_global_avgpool = original_fuser
     fusion_layers = _hailo_lightedgedet_fusion_layers(runner.get_hn_dict())
-    output_layers = [layer.inputs[0].rsplit("/", 1)[-1] for layer in runner.get_hn_model().get_output_layers()]
 
     images = dataset_images(args.data, args.calib_size, args.dataset_root)
     model_script = [
@@ -190,9 +189,6 @@ def main() -> None:
         )
     else:
         model_script.append("post_quantization_optimization(finetune, policy=disabled)")
-    model_script.extend(
-        f"change_output_activation({output_layers[i]}, sigmoid)" for i in range(1, len(output_layers), 2)
-    )
     runner.load_model_script("\n".join(model_script))
 
     def calibration_dataset():
@@ -210,7 +206,7 @@ def main() -> None:
     metadata.update(
         nms=False,
         output_type="raw_box_and_class_logits",
-        class_activation="sigmoid",
+        class_activation="raw",
         output_quantized=False,
     )
     (output_dir / "metadata.yaml").write_text(yaml.safe_dump(metadata, sort_keys=False))
