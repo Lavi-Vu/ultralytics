@@ -98,7 +98,7 @@ def letterbox_rgb(path: Path, size: int) -> np.ndarray:
     return np.ascontiguousarray(image[..., ::-1], dtype=np.float32)
 
 
-def export_onnx(model: torch.nn.Module, output: Path, size: int) -> None:
+def export_onnx(model: torch.nn.Module, output: Path, size: int, metadata: dict) -> None:
     """Export the model graph directly to ONNX at opset 14 for attention compatibility."""
     image = torch.zeros(1, 3, size, size)
     kwargs = {"dynamo": False} if "dynamo" in inspect.signature(torch.onnx.export).parameters else {}
@@ -113,6 +113,13 @@ def export_onnx(model: torch.nn.Module, output: Path, size: int) -> None:
         do_constant_folding=True,
         **kwargs,
     )
+    import onnx
+
+    onnx_model = onnx.load(output)
+    for key, value in metadata.items():
+        item = onnx_model.metadata_props.add()
+        item.key, item.value = key, str(value)
+    onnx.save(onnx_model, output)
 
 
 def main() -> None:
@@ -144,7 +151,13 @@ def main() -> None:
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True)
     onnx_file = output_dir / f"{args.weights.stem}.onnx"
-    export_onnx(model, onnx_file, args.imgsz)
+    metadata = {
+        "task": "lightedgedet",
+        "imgsz": [args.imgsz, args.imgsz],
+        "stride": int(max(model.stride)),
+        "names": yolo.names,
+    }
+    export_onnx(model, onnx_file, args.imgsz, metadata)
 
     # Keep each scale's box/class outputs adjacent; class activations below select the odd entries.
     end_nodes = [f"/detect/cv{branch}.{level}/cv{branch}.{level}.2/Conv" for level in range(4) for branch in (2, 3)]
@@ -194,16 +207,12 @@ def main() -> None:
     )
     hef_file = output_dir / f"{args.weights.stem}.hef"
     hef_file.write_bytes(runner.compile())
-    metadata = {
-        "task": "lightedgedet",
-        "imgsz": [args.imgsz, args.imgsz],
-        "stride": int(max(model.stride)),
-        "names": yolo.names,
-        "nms": False,
-        "output_type": "raw_box_and_class_logits",
-        "class_activation": "sigmoid",
-        "output_quantized": False,
-    }
+    metadata.update(
+        nms=False,
+        output_type="raw_box_and_class_logits",
+        class_activation="sigmoid",
+        output_quantized=False,
+    )
     (output_dir / "metadata.yaml").write_text(yaml.safe_dump(metadata, sort_keys=False))
     print(f"Hailo export complete: {output_dir}")
 
